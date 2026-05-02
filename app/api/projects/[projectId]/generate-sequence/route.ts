@@ -1,0 +1,132 @@
+import { NextResponse } from 'next/server'
+import Anthropic from '@anthropic-ai/sdk'
+import { createClient } from '@/utils/supabase/server'
+import type { SequenceConfig, SequenceStep, CaseStudy } from '@/app/actions/sequences'
+
+const anthropic = new Anthropic()
+
+const LINKEDIN_PLACEHOLDERS = `Available placeholders for personalization:
+- {firstName} — prospect's first name
+- {lastName} — prospect's last name
+- {company} — prospect's company name
+- {position} — prospect's job title
+- {industry} — prospect's industry
+- {mutualFirstFullName} — mutual connection's full name (LinkedIn only)`
+
+function buildPrompt(
+  config: SequenceConfig,
+  offerText: string | null,
+  icpJson: Record<string, unknown> | null,
+  caseStudies: CaseStudy[],
+): string {
+  const toneMap = {
+    professional: 'formal, polished, business-like',
+    casual: 'friendly, conversational, approachable',
+    direct: 'concise, no fluff, straight to the point',
+  }
+
+  const caseStudiesText = caseStudies.length > 0
+    ? `\nProven results to reference (use 1–2 selectively, not all):\n${caseStudies.map(cs =>
+        `- ${cs.company}${cs.industry ? ` (${cs.industry})` : ''}: ${cs.result}${cs.description ? ` — ${cs.description}` : ''}`
+      ).join('\n')}`
+    : ''
+
+  const icpText = icpJson
+    ? `\nTarget ICP:\n- Industries: ${(icpJson.industries as string[] ?? []).join(', ')}\n- Titles: ${(icpJson.titles as string[] ?? []).join(', ')}\n- Pain points: ${(icpJson.pain_points as string[] ?? []).join(', ')}`
+    : ''
+
+  const channelInstructions = config.channel === 'linkedin'
+    ? `Channel: LinkedIn outreach
+${config.include_connection_note
+  ? `Step types allowed:
+- "connection_note": LinkedIn connection request note (max 300 chars, no subject) — use as step 1 on Day 0
+- "message": LinkedIn direct message (after connection accepted)`
+  : `Step types allowed:
+- "message" ONLY — do NOT use "connection_note" under any circumstances
+
+Rules for LinkedIn:
+- Connection note: FORBIDDEN. Every step must have type "message".`}
+
+Rules for LinkedIn:
+${config.include_connection_note ? '- Connection note: ultra-short, personalized hook, no pitch yet' : ''}
+- Messages: build rapport first, pitch later in the sequence
+- Keep messages under 500 characters each
+- Day 0: first step; subsequent steps spaced 3–5 days apart`
+    : `Channel: Email outreach
+Step types allowed:
+- "email": cold email with subject line
+
+Rules for Email:
+- Every step has a "subject" field
+- First email: compelling subject, value proposition, soft CTA
+- Follow-ups: reference previous email, add new angle or social proof
+- Keep emails under 200 words each
+- Day 0: first email; follow-ups spaced 3–5 days apart`
+
+  return `You are a B2B outreach copywriter. Write a ${config.steps_count}-step outreach sequence.
+
+Offer:
+${offerText ?? 'No offer description provided.'}
+${icpText}
+${caseStudiesText}
+
+${LINKEDIN_PLACEHOLDERS}
+
+${channelInstructions}
+
+Tone: ${toneMap[config.tone]}
+
+${config.channel === 'linkedin' && !config.include_connection_note ? 'CRITICAL: type must be "message" for every single step. Never use "connection_note".\n\n' : ''}Generate exactly ${config.steps_count} steps. Return only a JSON array:
+[
+  {
+    "type": "connection_note" | "message" | "email",
+    "day": <number>,
+    "subject": "<string, email only>",
+    "content": "<message text with {placeholders}>"
+  }
+]
+
+No markdown, no explanation, just the JSON array.`
+}
+
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ projectId: string }> },
+) {
+  const { projectId } = await params
+  const body = await req.json() as { config: SequenceConfig; caseStudies?: CaseStudy[] }
+  const { config, caseStudies = [] } = body
+
+  const supabase = await createClient()
+
+  const { data: project } = await supabase
+    .from('projects')
+    .select('offer_text, icp_json')
+    .eq('id', projectId)
+    .single()
+
+  if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+
+  const prompt = buildPrompt(
+    config,
+    project.offer_text,
+    project.icp_json as Record<string, unknown> | null,
+    caseStudies,
+  )
+
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 4000,
+    messages: [{ role: 'user', content: prompt }],
+  })
+
+  let steps: SequenceStep[] = []
+  try {
+    const text = msg.content[0].type === 'text' ? msg.content[0].text : ''
+    steps = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? '[]')
+  } catch {
+    return NextResponse.json({ error: 'Failed to parse Claude response' }, { status: 500 })
+  }
+
+  return NextResponse.json({ steps })
+}
