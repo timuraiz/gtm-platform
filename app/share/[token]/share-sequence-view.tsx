@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback, Fragment } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MessageCircle, Pencil, X, Send, Check } from 'lucide-react'
+import { MessageCircle, Pencil, X, Send, Check, Copy } from 'lucide-react'
 import { ChannelIcon } from '@/components/channel-icon'
 import { addComment, updateComment, deleteComment, setSequenceApproval } from '@/app/actions/sequences'
 import type { Sequence, SequenceStep, SequenceComment, SequenceContext, CaseStudy } from '@/app/actions/sequences'
+import type { Contact } from '@/app/actions/pipeline'
 import { ClientLogo } from '@/components/client-logo'
 
 const typeLabel: Record<SequenceStep['type'], string> = {
@@ -73,14 +74,88 @@ const highlightColors = [
   'bg-orange-300/70',
 ]
 
+const BUILTIN_PLACEHOLDERS = new Set([
+  'firstName', 'lastName', 'company', 'position', 'industry', 'mutualFirstFullName',
+])
+
+function resolvePlaceholder(name: string, contact: Contact, contextIndustry?: string | null): string | null {
+  switch (name) {
+    case 'firstName': return contact.first_name?.trim() || null
+    case 'lastName': return contact.last_name?.trim() || null
+    case 'company': return contact.company_name?.trim() || null
+    case 'position': return contact.title?.trim() || null
+    case 'industry': return contextIndustry?.trim() || null
+    case 'mutualFirstFullName': return null
+  }
+  return contact.custom_data?.[name]?.trim() || null
+}
+
+function CopyStepButton({ step }: { step: SequenceStep }) {
+  const [copied, setCopied] = useState(false)
+  function copy() {
+    const text = step.subject ? `Subject: ${step.subject}\n\n${step.content}` : step.content
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button
+      onClick={copy}
+      title="Copy raw text with placeholders"
+      className="ml-auto flex items-center gap-1 text-[11px] text-zinc-300 hover:text-zinc-700 transition-colors"
+    >
+      {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
+function PreviewContent({ text, contact, industry }: { text: string; contact: Contact; industry: string | null }) {
+  const parts = text.split(/(\{[a-zA-Z_][a-zA-Z0-9_]*\})/g)
+  return (
+    <>
+      {parts.map((part, i) => {
+        const m = part.match(/^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/)
+        if (!m) return <span key={i}>{part}</span>
+        const name = m[1]
+        const resolved = resolvePlaceholder(name, contact, industry)
+        const isBuiltin = BUILTIN_PLACEHOLDERS.has(name)
+        const cls = isBuiltin ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700'
+        // Resolved → show real value with placeholder color (still readable as substitution)
+        if (resolved) {
+          return (
+            <span key={i} className={`${cls} rounded px-1`} title={`{${name}}`}>{resolved}</span>
+          )
+        }
+        // Unresolved → keep raw {name} mono so the gap is obvious
+        return (
+          <span key={i} className={`${cls} rounded px-0.5 font-mono text-[11px]`}>{part}</span>
+        )
+      })}
+    </>
+  )
+}
+
 function StepContent({ segments }: { segments: Segment[] }) {
   return (
     <>
       {segments.map((seg, i) => {
         const hl = highlightColors[Math.min(seg.depth, highlightColors.length - 1)]
-        if (seg.placeholder) return (
-          <span key={i} className={`rounded px-0.5 font-mono text-[11px] ${seg.depth > 0 ? hl + ' text-blue-600' : 'bg-blue-50 text-blue-600'}`}>{seg.text}</span>
-        )
+        if (seg.placeholder) {
+          const name = seg.text.slice(1, -1).trim()
+          const isBuiltin = BUILTIN_PLACEHOLDERS.has(name)
+          const tone = isBuiltin
+            ? { text: 'text-blue-600', bg: 'bg-blue-50' }
+            : { text: 'text-violet-700', bg: 'bg-violet-50' }
+          return (
+            <span
+              key={i}
+              className={`rounded px-0.5 font-mono text-[11px] ${seg.depth > 0 ? `${hl} ${tone.text}` : `${tone.bg} ${tone.text}`}`}
+            >
+              {seg.text}
+            </span>
+          )
+        }
         if (seg.depth > 0) return (
           <mark key={i} className={`${hl} text-inherit rounded-sm`}>{seg.text}</mark>
         )
@@ -311,24 +386,48 @@ export function ShareSequenceView({
   initialActiveId,
   initialCommentsBySeq,
   context,
+  previewContact = null,
+  embedded = false,
+  activeIdControlled,
+  onActiveIdChange,
+  approvedByChannelControlled,
+  onApprovedByChannelChange,
 }: {
   versions: Sequence[]
   initialActiveId: string
   initialCommentsBySeq: Record<string, SequenceComment[]>
   context: SequenceContext
+  previewContact?: Contact | null
+  embedded?: boolean
+  activeIdControlled?: string
+  onActiveIdChange?: (id: string) => void
+  approvedByChannelControlled?: Record<'linkedin' | 'email', string | null>
+  onApprovedByChannelChange?: (next: Record<'linkedin' | 'email', string | null>) => void
 }) {
-  const [activeId, setActiveId] = useState(initialActiveId)
+  const [activeIdInternal, setActiveIdInternal] = useState(initialActiveId)
+  const activeId = activeIdControlled ?? activeIdInternal
+  const setActiveId = (id: string) => {
+    if (onActiveIdChange) onActiveIdChange(id)
+    else setActiveIdInternal(id)
+  }
   const [commentsBySeq, setCommentsBySeq] = useState<Record<string, SequenceComment[]>>(initialCommentsBySeq)
+  useEffect(() => { setCommentsBySeq(initialCommentsBySeq) }, [initialCommentsBySeq])
   const [pendingStep, setPendingStep] = useState<{ stepIndex: number; quote: string } | null>(null)
   const [draftText, setDraftText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [floatingBtn, setFloatingBtn] = useState<{ quote: string; x: number; y: number; stepIndex: number } | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const [approvedByChannel, setApprovedByChannel] = useState<Record<'linkedin' | 'email', string | null>>(() => ({
+  const [approvedByChannelInternal, setApprovedByChannelInternal] = useState<Record<'linkedin' | 'email', string | null>>(() => ({
     linkedin: versions.find(v => v.channel === 'linkedin' && v.status === 'approved')?.id ?? null,
     email: versions.find(v => v.channel === 'email' && v.status === 'approved')?.id ?? null,
   }))
+  const approvedByChannel = approvedByChannelControlled ?? approvedByChannelInternal
+  const setApprovedByChannel = (next: Record<'linkedin' | 'email', string | null>) => {
+    if (onApprovedByChannelChange) onApprovedByChannelChange(next)
+    else setApprovedByChannelInternal(next)
+  }
   const [approving, setApproving] = useState(false)
+  const [previewMode, setPreviewMode] = useState(false)
 
   async function toggleApprove() {
     if (approving) return
@@ -338,10 +437,10 @@ export function ShareSequenceView({
     setApproving(true)
     try {
       await setSequenceApproval(activeId, willApprove)
-      setApprovedByChannel(prev => ({
-        ...prev,
+      setApprovedByChannel({
+        ...approvedByChannel,
         [channel]: willApprove ? activeId : null,
-      }))
+      })
     } finally { setApproving(false) }
   }
 
@@ -417,10 +516,10 @@ export function ShareSequenceView({
         }
       `}</style>
 
-      <div className="min-h-screen bg-white">
-        <div className="max-w-5xl mx-auto px-8 py-14">
-          <div className="mb-10 max-w-[560px] mx-auto">
-            {context.client_name && (
+      <div className={embedded ? '' : 'min-h-screen bg-white'}>
+        <div className={embedded ? '' : 'max-w-5xl mx-auto px-8 py-14'}>
+          <div className={embedded ? 'mb-6 max-w-[560px] mx-auto' : 'mb-10 max-w-[560px] mx-auto'}>
+            {!embedded && context.client_name && (
               <div className="flex items-center gap-2.5 mb-4">
                 <ClientLogo name={context.client_name} logoUrl={context.client_logo_url} size="md" />
                 <span className="text-sm font-medium text-zinc-700">{context.client_name}</span>
@@ -441,8 +540,26 @@ export function ShareSequenceView({
                   <p className="text-sm text-zinc-400 mt-0.5">
                     {sequence.channel === 'linkedin' ? 'LinkedIn' : 'Email'} · {sequence.steps.length} steps
                   </p>
+                  {previewContact && (
+                    <button
+                      onClick={() => setPreviewMode(p => !p)}
+                      className="mt-2 inline-flex items-center gap-2 text-xs"
+                    >
+                      <span className={`relative inline-block w-8 h-4 rounded-full transition-colors ${previewMode ? 'bg-zinc-900' : 'bg-zinc-200'}`}>
+                        <span
+                          className="absolute top-0.5 left-0.5 size-3 rounded-full bg-white shadow-sm transition-transform"
+                          style={{ transform: previewMode ? 'translateX(16px)' : 'translateX(0)' }}
+                        />
+                      </span>
+                      <span className={previewMode ? 'text-zinc-700' : 'text-zinc-400 hover:text-zinc-600 transition-colors'}>
+                        {previewMode
+                          ? `Previewing as ${[previewContact.first_name, previewContact.last_name].filter(Boolean).join(' ') || previewContact.email || 'contact'}`
+                          : 'Preview with real contact data'}
+                      </span>
+                    </button>
+                  )}
                 </div>
-                {(() => {
+                {!embedded && (() => {
                   const channel = sequence.channel
                   const approvedInChannel = approvedByChannel[channel]
                   const isApprovedHere = approvedInChannel === activeId
@@ -501,7 +618,7 @@ export function ShareSequenceView({
               </div>
             )}
 
-            <ContextCard projectName={context.project_name} offerText={context.offer_text} icp={context.icp_json} />
+            {!embedded && <ContextCard projectName={context.project_name} offerText={context.offer_text} icp={context.icp_json} />}
 
             <AnimatePresence mode="wait">
               <motion.div
@@ -523,9 +640,50 @@ export function ShareSequenceView({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="space-y-10"
+            className={`space-y-10 transition-shadow duration-300 ${
+              approvedByChannel[sequence.channel] === activeId
+                ? 'rounded-2xl ring-1 ring-emerald-200 shadow-[0_0_0_4px_rgba(16,185,129,0.05)] p-6 bg-emerald-50/20'
+                : ''
+            }`}
           >
             {sequence.steps.map((step, i) => {
+              // Preview mode: render replaced text with preserved placeholder colors so
+              // reviewers see what was dynamically substituted. Comments are still listed
+              // below each step (selection/floating button disabled).
+              if (previewMode && previewContact) {
+                const industry = (context.icp_json?.industries as string[] | undefined)?.[0] ?? null
+                const previewStepComments = comments.filter(c => c.step_index === i)
+                return (
+                  <div key={i} className="max-w-[560px] mx-auto">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-widest">{typeLabel[step.type]}</span>
+                      <span className="text-xs text-zinc-300">Day {step.day}</span>
+                      <CopyStepButton step={step} />
+                    </div>
+                    {step.subject && (
+                      <p className="text-base font-semibold text-zinc-800 mb-2">
+                        <PreviewContent text={step.subject} contact={previewContact} industry={industry} />
+                      </p>
+                    )}
+                    <p className="text-[15px] text-zinc-700 leading-8 whitespace-pre-wrap">
+                      <PreviewContent text={step.content} contact={previewContact} industry={industry} />
+                    </p>
+                    {previewStepComments.length > 0 && (
+                      <div className="mt-4 border-l-2 border-zinc-100 pl-4 space-y-2">
+                        {previewStepComments.map(c => (
+                          <CommentCardItem
+                            key={c.id}
+                            comment={c}
+                            onUpdate={(id, content) => setComments(prev => prev.map(x => x.id === id ? { ...x, content } : x))}
+                            onDelete={id => setComments(prev => prev.filter(x => x.id !== id))}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+
               const stepComments = comments.filter(c => c.step_index === i)
               const isPending = pendingStep?.stepIndex === i
               const allQuotes = [
@@ -617,6 +775,7 @@ export function ShareSequenceView({
                   <div className="flex items-center gap-2 mb-3">
                     <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-widest">{typeLabel[step.type]}</span>
                     <span className="text-xs text-zinc-300">Day {step.day}</span>
+                    <CopyStepButton step={step} />
                   </div>
                   {step.subject && <p className="text-base font-semibold text-zinc-800 mb-2">{step.subject}</p>}
 

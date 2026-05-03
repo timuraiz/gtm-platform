@@ -163,7 +163,7 @@ function RunCard({ run, onFork }: { run: PipelineRun; onFork: (runId: string) =>
 
 // ─── Main view ────────────────────────────────────────────────────────────────
 
-export function ProjectPipelineView({ projectId, initialRuns, icp }: { projectId: string; initialRuns: PipelineRun[]; icp?: Record<string, unknown> | null }) {
+export function ProjectPipelineView({ projectId, iterationId, initialRuns, icp }: { projectId: string; iterationId: string; initialRuns: PipelineRun[]; icp?: Record<string, unknown> | null }) {
   const router = useRouter()
   const [runs, setRuns] = useState(initialRuns)
   const [liveRunId, setLiveRunId] = useState<string | null>(null)
@@ -196,6 +196,7 @@ export function ProjectPipelineView({ projectId, initialRuns, icp }: { projectId
         <Suspense fallback={<div className="h-10 flex items-center text-sm text-zinc-400">Loading…</div>}>
           <PipelinePanel
             projectId={projectId}
+            iterationId={iterationId}
             icp={icp}
             onRunCreated={onRunStarted}
             onDone={refreshRuns}

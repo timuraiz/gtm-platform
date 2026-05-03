@@ -1,19 +1,28 @@
 import { redirect } from 'next/navigation'
-import { getClient } from '@/app/actions/clients'
+import { getClient, getClientShareToken } from '@/app/actions/clients'
 import { getProjects } from '@/app/actions/projects'
-import { getContacts } from '@/app/actions/contacts'
-import { ClientProjects } from '@/components/client-projects'
+import { getClientStats } from '@/app/actions/iterations'
 import { ClientLogo } from '@/components/client-logo'
 import { ClientPageTabs } from '@/components/client-page-tabs'
+import { ShareReportButton } from '@/components/share-report-button'
 
-export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ClientPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>
+  searchParams: Promise<{ from?: string; to?: string; projects?: string }>
+}) {
   const { id } = await params
-  let client, projects, contacts
+  const { from, to, projects: projectsParam } = await searchParams
+  const selectedProjectIds = projectsParam ? projectsParam.split(',').filter(Boolean) : null
+  let client, projects, stats, shareToken
   try {
-    ;[client, projects, contacts] = await Promise.all([
+    ;[client, projects, stats, shareToken] = await Promise.all([
       getClient(id),
       getProjects(id),
-      getContacts(id),
+      getClientStats(id, from ?? null, to ?? null, selectedProjectIds),
+      getClientShareToken(id),
     ])
   } catch {
     redirect('/')
@@ -23,7 +32,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     <div className="px-8 py-8 w-full">
       <div className="mb-8 flex items-center gap-3">
         <ClientLogo name={client!.name} logoUrl={client!.logo_url ?? null} size="lg" />
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="text-xl font-semibold text-zinc-900">{client!.name}</h1>
           {client!.website_url && (
             <a
@@ -36,15 +45,18 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             </a>
           )}
         </div>
+        {shareToken && <ShareReportButton token={shareToken} />}
       </div>
 
       <ClientPageTabs
         clientId={id}
         websiteUrl={client!.website_url ?? null}
         projects={projects!}
-        contacts={contacts!}
         caseStudies={(client!.case_studies as import('@/app/actions/clients').CaseStudy[]) ?? []}
         caseStudiesScrapedAt={client!.case_studies_scraped_at ?? null}
+        stats={stats!}
+        statsRange={{ from: from ?? null, to: to ?? null }}
+        statsProjectIds={selectedProjectIds ?? []}
       />
     </div>
   )

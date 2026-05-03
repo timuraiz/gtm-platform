@@ -130,6 +130,7 @@ async function runApolloSearch(filters: Record<string, unknown>, icp: Record<str
     domain: string; name: string; apollo_id?: string
     description: string; keywords: string[]; industry: string
     funding_stage: string; employee_count: number
+    logo_url: string | null
   }> = []
   const title_hits: Record<string, number> = {}
   const keyword_hits: Record<string, number> = {}
@@ -201,6 +202,7 @@ async function runApolloSearch(filters: Record<string, unknown>, icp: Record<str
           industry: (org.industry ?? '') as string,
           funding_stage: (org.latest_funding_stage ?? '') as string,
           employee_count: (org.estimated_num_employees ?? 0) as number,
+          logo_url: (org.logo_url ?? null) as string | null,
         })
         hits++
       }
@@ -217,6 +219,7 @@ type ApolloCompany = {
   domain: string; name: string; apollo_id?: string
   description: string; keywords: string[]; industry: string
   funding_stage: string; employee_count: number
+  logo_url: string | null
 }
 
 async function runScrape(companies: ApolloCompany[]) {
@@ -253,6 +256,7 @@ async function runClassify(
     domain: c.domain, name: c.name,
     is_target: true, confidence: 100,
     segment: 'UNCLASSIFIED', reasoning: 'Classification skipped',
+    logo_url: c.logo_url,
   }))
   return {
     total: scrapeResults.length,
@@ -380,8 +384,8 @@ type StepName = typeof STEP_ORDER[number]
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json() as { projectId: string; step: StepName; runId?: string; page?: number; seenDomains?: string[]; domainOffset?: number; domainsOverride?: string[] }
-    const { projectId, step, runId: existingRunId, page = 1, seenDomains = [], domainOffset = 0, domainsOverride } = body
+    const body = await req.json() as { projectId: string; iterationId?: string; step: StepName; runId?: string; page?: number; seenDomains?: string[]; domainOffset?: number; domainsOverride?: string[] }
+    const { projectId, iterationId, step, runId: existingRunId, page = 1, seenDomains = [], domainOffset = 0, domainsOverride } = body
     const supabase = db()
 
     // Load project + client
@@ -493,7 +497,7 @@ export async function POST(req: Request) {
 
     // Persist companies + contacts on relevant steps
     if (step === 'classify') {
-      const result = artifact as { results: Array<{ domain: string; name: string; is_target: boolean; confidence: number; segment: string; reasoning: string }> }
+      const result = artifact as { results: Array<{ domain: string; name: string; is_target: boolean; confidence: number; segment: string; reasoning: string; logo_url?: string | null }> }
       if (result.results.length > 0) {
         await supabase.from('companies').upsert(
           result.results.map(r => ({
@@ -507,6 +511,7 @@ export async function POST(req: Request) {
             segment: r.segment,
             reasoning: r.reasoning,
             qualification_status: r.is_target ? 'qualified' : 'rejected',
+            logo_url: r.logo_url ?? null,
           })),
           { onConflict: 'project_id,domain' },
         )
@@ -535,6 +540,7 @@ export async function POST(req: Request) {
           if (em) seenEmail.add(em)
           rows.push({
             project_id: projectId,
+            iteration_id: iterationId ?? null,
             company_id: domainToId[c.domain],
             linkedin_url: li,
             email: em,

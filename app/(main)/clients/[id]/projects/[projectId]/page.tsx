@@ -1,29 +1,38 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { getProject, getPipelineRuns, getContacts } from '@/app/actions/pipeline'
-import { getSequences, getProjectCaseStudies } from '@/app/actions/sequences'
+import { getProject, getPipelineRuns, getContacts, getIterationCustomColumns } from '@/app/actions/pipeline'
+import { getSequences, getProjectCaseStudies, getProjectShareToken } from '@/app/actions/sequences'
+import { getIterations } from '@/app/actions/iterations'
 import { ProjectPipelineView } from '@/components/project-pipeline-view'
 import { ClientLogo } from '@/components/client-logo'
 import { IcpEditor } from '@/components/icp-editor'
 import { ContactsTable } from '@/components/contacts-table'
 import { SequenceBuilder } from '@/components/sequence-builder'
+import { ProjectShareButton } from '@/components/project-share-button'
+import { IterationSelector, FirstIterationPrompt } from '@/components/iteration-selector'
+import { IterationStats } from '@/components/iteration-stats'
 
 export default async function ProjectPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string; projectId: string }>
-  searchParams: Promise<{ tab?: string }>
+  searchParams: Promise<{ tab?: string; iter?: string }>
 }) {
   const { id: clientId, projectId } = await params
-  const { tab = 'pipeline' } = await searchParams
+  const { tab = 'pipeline', iter } = await searchParams
 
-  const [project, runs, contacts, sequences, caseStudies] = await Promise.all([
+  const iterations = await getIterations(projectId)
+  const activeIteration = iterations.find(i => i.id === iter) ?? iterations[0] ?? null
+
+  const [project, runs, contacts, sequences, caseStudies, shareToken, customColumns] = await Promise.all([
     getProject(projectId),
     getPipelineRuns(projectId),
-    getContacts(projectId),
-    getSequences(projectId),
+    activeIteration ? getContacts(projectId, activeIteration.id) : Promise.resolve([]),
+    activeIteration ? getSequences(projectId, activeIteration.id) : Promise.resolve([]),
     getProjectCaseStudies(projectId),
+    getProjectShareToken(projectId),
+    activeIteration ? getIterationCustomColumns(projectId, activeIteration.id) : Promise.resolve([] as string[]),
   ])
 
   if (!project) redirect(`/clients/${clientId}`)
@@ -45,11 +54,14 @@ export default async function ProjectPage({
       </div>
 
       {/* Project header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-zinc-900">{project.name}</h1>
-        {project.offer_text && (
-          <p className="mt-1 text-sm text-zinc-500 max-w-2xl">{project.offer_text}</p>
-        )}
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-zinc-900">{project.name}</h1>
+          {project.offer_text && (
+            <p className="mt-1 text-sm text-zinc-500 max-w-2xl">{project.offer_text}</p>
+          )}
+        </div>
+        {shareToken && <ProjectShareButton token={shareToken} />}
       </div>
 
       {/* ICP editor */}
@@ -61,33 +73,44 @@ export default async function ProjectPage({
         />
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-zinc-100 mb-6 flex gap-1">
-        {([
-          { key: 'pipeline', label: 'Pipeline' },
-          { key: 'contacts', label: `Contacts${contacts.length ? ` (${contacts.length})` : ''}` },
-          { key: 'sequences', label: `Sequences${sequences.length ? ` (${sequences.length})` : ''}` },
-        ] as const).map(t => (
-          <Link
-            key={t.key}
-            href={`?tab=${t.key}`}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              tab === t.key
-                ? 'border-zinc-900 text-zinc-900'
-                : 'border-transparent text-zinc-400 hover:text-zinc-600'
-            }`}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </div>
-
-      {tab === 'contacts' ? (
-        <ContactsTable contacts={contacts} />
-      ) : tab === 'sequences' ? (
-        <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} />
+      {!activeIteration ? (
+        <FirstIterationPrompt projectId={projectId} />
       ) : (
-        <ProjectPipelineView projectId={projectId} initialRuns={runs} icp={project.icp_json as Record<string, unknown> | null} />
+        <>
+          {/* Iterations + tabs — fixed in document position, no sticky */}
+          <IterationSelector iterations={iterations} activeId={activeIteration.id} projectId={projectId} />
+          <div className="border-b border-zinc-100 mb-6 flex gap-1">
+            {([
+              { key: 'pipeline', label: 'Pipeline' },
+              { key: 'contacts', label: `Contacts${contacts.length ? ` (${contacts.length})` : ''}` },
+              { key: 'sequences', label: `Sequences${sequences.length ? ` (${sequences.length})` : ''}` },
+              { key: 'stats', label: 'Stats' },
+            ] as const).map(t => (
+              <Link
+                key={t.key}
+                href={`?tab=${t.key}&iter=${activeIteration.id}`}
+                scroll={false}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  tab === t.key
+                    ? 'border-zinc-900 text-zinc-900'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-600'
+                }`}
+              >
+                {t.label}
+              </Link>
+            ))}
+          </div>
+
+          {tab === 'contacts' ? (
+            <ContactsTable contacts={contacts} projectId={projectId} iterationId={activeIteration.id} />
+          ) : tab === 'sequences' ? (
+            <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} iterationId={activeIteration.id} iterationChannel={activeIteration.channel} customColumns={customColumns} />
+          ) : tab === 'stats' ? (
+            <IterationStats iterationId={activeIteration.id} initialStats={activeIteration.stats ?? null} uploadedAt={activeIteration.stats_uploaded_at ?? null} />
+          ) : (
+            <ProjectPipelineView projectId={projectId} iterationId={activeIteration.id} initialRuns={runs} icp={project.icp_json as Record<string, unknown> | null} />
+          )}
+        </>
       )}
     </div>
   )

@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { getSequenceByToken, getComments, getSequenceContext, getSequences } from '@/app/actions/sequences'
+import { getContacts } from '@/app/actions/pipeline'
 import { ShareSequenceView } from './share-sequence-view'
 import type { SequenceComment } from '@/app/actions/sequences'
 
@@ -8,9 +9,12 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
   const sequence = await getSequenceByToken(token)
   if (!sequence) notFound()
 
-  const [allSequences, context] = await Promise.all([
+  const [allSequences, context, contacts] = await Promise.all([
     getSequences(sequence.project_id),
     getSequenceContext(sequence.project_id),
+    sequence.iteration_id
+      ? getContacts(sequence.project_id, sequence.iteration_id)
+      : Promise.resolve([]),
   ])
 
   // Order ASC so v1 is the oldest
@@ -27,6 +31,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
       initialActiveId={sequence.id}
       initialCommentsBySeq={commentsBySeq}
       context={context}
+      previewContact={contacts[0] ?? null}
     />
   )
 }

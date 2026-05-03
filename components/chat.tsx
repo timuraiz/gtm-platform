@@ -6,7 +6,29 @@ import { useChat } from '@ai-sdk/react'
 import { isToolUIPart, isReasoningUIPart, getToolName, DefaultChatTransport, type UIMessage } from 'ai'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
+import { ExternalLink, Link as LinkIcon, Check, Copy, Mail, Play, CircleCheck, CircleSlash, Circle, UserCheck } from 'lucide-react'
+import { ChannelIcon } from './channel-icon'
 import { fadeUp, blurIn, scaleIn, staggerContainer, springGentle, spring } from '@/lib/animations'
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const TEXTAREA_MIN = 42
+const TEXTAREA_MAX = 240
+
+export function autosize(el: HTMLTextAreaElement) {
+  // Measure natural content height without disturbing the visible height
+  // (saves current inline style, briefly clears it to read scrollHeight, restores)
+  const prev = el.style.height
+  el.style.transition = 'none'
+  el.style.height = '0px'
+  const measured = el.scrollHeight
+  el.style.height = prev
+  // Force a reflow so the browser commits the restored height before re-enabling transition
+  void el.offsetHeight
+  el.style.transition = ''
+  const next = Math.min(Math.max(measured, TEXTAREA_MIN), TEXTAREA_MAX)
+  el.style.height = next + 'px'
+}
 
 // ─── Tool result renderers ───────────────────────────────────────────────────
 
@@ -63,6 +85,278 @@ function ProjectCard({ project }: { project: ProjectData }) {
   )
 }
 
+type IterationData = {
+  id: string; project_id: string; name: string
+  channel: 'linkedin' | 'email'
+  status: 'draft' | 'running' | 'finished' | 'discarded'
+  started_at: string | null; finished_at: string | null
+  stats: Record<string, number | null> | null
+}
+type SequenceData = {
+  id: string; name: string; channel: 'linkedin' | 'email'
+  status: 'draft' | 'review' | 'approved'
+  share_token: string
+  steps?: Array<{ type: string; day: number; subject?: string; content: string }>
+  project_id?: string
+}
+type ContactData = {
+  id: string; first_name: string | null; last_name: string | null
+  title: string | null; email: string | null; linkedin_url: string
+  company_name: string | null; company_domain: string | null; company_logo_url: string | null
+  custom_data: Record<string, string> | null
+}
+type ProjectFull = ProjectData & { client_id?: string; client_name?: string | null; client_logo_url?: string | null; share_token?: string }
+
+function ProjectFullCard({ project }: { project: ProjectFull }) {
+  const router = useRouter()
+  return (
+    <button
+      onClick={() => project.client_id && router.push(`/clients/${project.client_id}/projects/${project.id}`)}
+      className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left hover:border-zinc-300 hover:shadow-sm transition-all w-full"
+    >
+      {project.client_logo_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={project.client_logo_url} alt={project.client_name ?? ''} className="size-8 rounded-lg object-contain" />
+      ) : (
+        <span className="size-8 rounded-lg bg-zinc-100 flex items-center justify-center text-sm font-semibold text-zinc-500 shrink-0">
+          {(project.client_name ?? project.name)[0]?.toUpperCase()}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-zinc-900 truncate">{project.name}</p>
+        {project.client_name && <p className="text-xs text-zinc-400 truncate">{project.client_name}</p>}
+      </div>
+      <span className="ml-auto text-zinc-300 shrink-0">→</span>
+    </button>
+  )
+}
+
+function StatusDotCard({ status }: { status: IterationData['status'] }) {
+  const meta = {
+    draft: { Icon: Circle, color: 'text-zinc-500', bg: 'bg-zinc-100', label: 'Draft' },
+    running: { Icon: Play, color: 'text-blue-700', bg: 'bg-blue-50', label: 'Running' },
+    finished: { Icon: CircleCheck, color: 'text-emerald-700', bg: 'bg-emerald-50', label: 'Finished' },
+    discarded: { Icon: CircleSlash, color: 'text-rose-600', bg: 'bg-rose-50', label: 'Discarded' },
+  }[status]
+  const Icon = meta.Icon
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${meta.bg} ${meta.color}`}>
+      <Icon size={10} strokeWidth={2.5} />
+      {meta.label}
+    </span>
+  )
+}
+
+function IterationCard({ iter }: { iter: IterationData }) {
+  const channelTone = iter.channel === 'linkedin' ? 'text-blue-600' : 'text-orange-600'
+  const stats = iter.stats
+  const summary = stats ? [
+    stats.leads_sent ? `${stats.leads_sent} sent` : null,
+    stats.replies ? `${stats.replies} replies` : null,
+    stats.meetings_booked ? `${stats.meetings_booked} meetings` : null,
+  ].filter(Boolean).join(' · ') : null
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3">
+      <span className={channelTone}>
+        {iter.channel === 'linkedin' ? <ChannelIcon channel="linkedin" size={14} /> : <Mail size={14} />}
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-zinc-900">{iter.name}</span>
+          <StatusDotCard status={iter.status} />
+        </div>
+        {summary && <p className="text-[11px] text-zinc-500 mt-0.5 tabular-nums">{summary}</p>}
+      </div>
+    </div>
+  )
+}
+
+function SequenceCard({ seq }: { seq: SequenceData }) {
+  const channelTone = seq.channel === 'linkedin' ? 'text-blue-700 bg-blue-50' : 'text-orange-700 bg-orange-50'
+  const open = `/share/${seq.share_token}`
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${channelTone}`}>
+          {seq.channel === 'linkedin' ? <ChannelIcon channel="linkedin" size={10} /> : <Mail size={10} />}
+          {seq.channel === 'linkedin' ? 'LinkedIn' : 'Email'}
+        </span>
+        <span className="text-sm font-medium text-zinc-900">{seq.name}</span>
+        {seq.status === 'approved' && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 px-2 py-0.5 text-[10px] font-medium">
+            <Check size={9} strokeWidth={3} />
+            Approved
+          </span>
+        )}
+        <a
+          href={open}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-700 transition-colors"
+        >
+          <ExternalLink size={11} />
+          Open
+        </a>
+      </div>
+      {seq.steps && seq.steps.length > 0 && (
+        <div className="space-y-1.5 pt-1.5 border-t border-zinc-50">
+          {seq.steps.slice(0, 2).map((s, i) => (
+            <div key={i} className="text-[11px] text-zinc-500 leading-relaxed">
+              <span className="text-zinc-400 uppercase tracking-wide mr-1.5">Step {i + 1} · Day {s.day}</span>
+              {s.subject && <span className="text-zinc-700 font-medium">{s.subject} — </span>}
+              <span className="text-zinc-500 line-clamp-2">{s.content}</span>
+            </div>
+          ))}
+          {seq.steps.length > 2 && <p className="text-[10px] text-zinc-300">+ {seq.steps.length - 2} more step{seq.steps.length - 2 === 1 ? '' : 's'}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ContactsList({ contacts, total }: { contacts: ContactData[]; total: number }) {
+  if (!contacts.length) return <p className="text-sm text-zinc-400">No contacts in this iteration.</p>
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-zinc-100 flex items-center justify-between">
+        <p className="text-xs text-zinc-500">{contacts.length} of {total} contacts</p>
+      </div>
+      <div className="divide-y divide-zinc-50 max-h-80 overflow-y-auto">
+        {contacts.map(c => {
+          const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '—'
+          return (
+            <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
+              {c.company_logo_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={c.company_logo_url} alt={c.company_name ?? ''} className="size-6 rounded-md object-contain ring-1 ring-zinc-100" />
+              ) : (
+                <span className="size-6 rounded-md bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">
+                  {(c.company_name ?? '?')[0]?.toUpperCase()}
+                </span>
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-zinc-800 truncate">{name}</p>
+                <p className="text-[11px] text-zinc-400 truncate">{[c.title, c.company_name].filter(Boolean).join(' · ') || '—'}</p>
+              </div>
+              {c.email && <span className="text-[11px] text-zinc-400 font-mono truncate max-w-[180px]">{c.email}</span>}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function ShareLinkCard({ url, label, kind }: { url: string; label: string; kind: 'client' | 'project' | 'sequence' }) {
+  const [copied, setCopied] = useState(false)
+  function copy() {
+    navigator.clipboard.writeText(url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-widest text-zinc-400 font-semibold">{kind} share link</span>
+        <span className="text-sm font-medium text-zinc-900 truncate">{label}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 text-xs text-zinc-600 font-mono bg-zinc-50 px-2.5 py-1.5 rounded-lg truncate">{url}</code>
+        <button
+          onClick={copy}
+          className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors"
+        >
+          {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors"
+        >
+          <ExternalLink size={11} />
+          Open
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function StatsSummary({ stats }: { stats: { linkedin: { iterations: number; leads_sent: number; replies: number; meetings_booked: number }; email: { iterations: number; leads_sent: number; replies: number; meetings_booked: number }; launched_this_week: number; status_counts: { draft: number; running: number; finished: number; discarded: number } } }) {
+  const totalMeetings = stats.linkedin.meetings_booked + stats.email.meetings_booked
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-zinc-400">Launched this week</p>
+          <p className="text-lg font-semibold text-zinc-900 tabular-nums">{stats.launched_this_week}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-zinc-400">Meetings</p>
+          <p className="text-lg font-semibold text-zinc-900 tabular-nums">{totalMeetings}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-zinc-400">Running</p>
+          <p className="text-lg font-semibold text-zinc-900 tabular-nums">{stats.status_counts.running}</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-zinc-50">
+        <div className="space-y-0.5">
+          <p className="flex items-center gap-1.5 text-blue-700 font-medium"><ChannelIcon channel="linkedin" size={11} /> LinkedIn</p>
+          <p className="text-zinc-500 tabular-nums">{stats.linkedin.leads_sent} sent · {stats.linkedin.replies} replies · {stats.linkedin.meetings_booked} meetings</p>
+        </div>
+        <div className="space-y-0.5">
+          <p className="flex items-center gap-1.5 text-orange-700 font-medium"><Mail size={11} /> Email</p>
+          <p className="text-zinc-500 tabular-nums">{stats.email.leads_sent} sent · {stats.email.replies} replies · {stats.email.meetings_booked} meetings</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+type CaseStudyData = { company: string; result: string; industry?: string; description?: string; manual?: boolean }
+
+function CaseStudyCard({ cs }: { cs: CaseStudyData }) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 space-y-1">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-zinc-900">{cs.company}</span>
+        {cs.industry && (
+          <span className="text-[10px] font-medium text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">{cs.industry}</span>
+        )}
+        {cs.manual && (
+          <span className="text-[10px] font-medium text-zinc-500 bg-zinc-100 rounded-full px-2 py-0.5">manual</span>
+        )}
+      </div>
+      <p className="text-sm text-zinc-800 font-medium leading-relaxed">{cs.result}</p>
+      {cs.description && <p className="text-xs text-zinc-500 leading-relaxed">{cs.description}</p>}
+    </div>
+  )
+}
+
+function TeamMemberCard({ email, invitedByEmail }: { email: string; invitedByEmail: string | null }) {
+  const initial = email[0]?.toUpperCase() || '?'
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
+      <span className="size-7 rounded-full bg-zinc-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">{initial}</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-zinc-800 truncate">{email}</p>
+        {invitedByEmail && <p className="text-[11px] text-zinc-400 truncate">invited by {invitedByEmail}</p>}
+      </div>
+    </div>
+  )
+}
+
+function SimpleStatus({ icon: Icon, text }: { icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>; text: string }) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 text-emerald-700 px-3 py-1.5 text-xs font-medium">
+      <Icon size={12} strokeWidth={2.5} />
+      {text}
+    </div>
+  )
+}
+
 function ToolResult({ toolName, output }: { toolName: string; output: unknown }) {
   const data = output as Record<string, unknown>
   if (!data) return null
@@ -72,12 +366,7 @@ function ToolResult({ toolName, output }: { toolName: string; output: unknown })
     const clients = (data.clients ?? []) as ClientData[]
     if (!clients.length) return <p className="text-sm text-zinc-400">No clients found.</p>
     return (
-      <motion.div
-        className="space-y-2"
-        variants={staggerContainer}
-        initial="hidden"
-        animate="show"
-      >
+      <motion.div className="space-y-2" variants={staggerContainer} initial="hidden" animate="show">
         {clients.map((c) => (
           <motion.div key={c.id} variants={fadeUp} transition={springGentle}>
             <ClientCard client={c} />
@@ -98,19 +387,117 @@ function ToolResult({ toolName, output }: { toolName: string; output: unknown })
     const projects = (data.projects ?? []) as ProjectData[]
     if (!projects.length) return <p className="text-sm text-zinc-400">No projects yet.</p>
     return (
-      <motion.div
-        className="space-y-2"
-        variants={staggerContainer}
-        initial="hidden"
-        animate="show"
-      >
+      <motion.div className="space-y-2" variants={staggerContainer} initial="hidden" animate="show">
         {projects.map((p) => (
-          <motion.div key={p.id} variants={fadeUp} transition={springGentle}>
-            <ProjectCard project={p} />
-          </motion.div>
+          <motion.div key={p.id} variants={fadeUp} transition={springGentle}><ProjectCard project={p} /></motion.div>
         ))}
       </motion.div>
     )
+  }
+  if (toolName === 'list_all_projects') {
+    const projects = (data.projects ?? []) as ProjectFull[]
+    if (!projects.length) return <p className="text-sm text-zinc-400">No projects yet.</p>
+    return (
+      <motion.div className="space-y-2" variants={staggerContainer} initial="hidden" animate="show">
+        {projects.map(p => (
+          <motion.div key={p.id} variants={fadeUp} transition={springGentle}><ProjectFullCard project={p} /></motion.div>
+        ))}
+      </motion.div>
+    )
+  }
+  if (toolName === 'list_iterations') {
+    const iters = (data.iterations ?? []) as IterationData[]
+    if (!iters.length) return <p className="text-sm text-zinc-400">No iterations yet.</p>
+    return (
+      <motion.div className="space-y-2" variants={staggerContainer} initial="hidden" animate="show">
+        {iters.map(it => (
+          <motion.div key={it.id} variants={fadeUp} transition={springGentle}><IterationCard iter={it} /></motion.div>
+        ))}
+      </motion.div>
+    )
+  }
+  if (toolName === 'create_iteration') {
+    const iter = data.iteration as IterationData | undefined
+    return iter ? <IterationCard iter={iter} /> : null
+  }
+  if (toolName === 'set_iteration_status') {
+    return <SimpleStatus icon={Check} text={`Status set to ${String(data.status)}`} />
+  }
+  if (toolName === 'list_sequences') {
+    const seqs = (data.sequences ?? []) as SequenceData[]
+    if (!seqs.length) return <p className="text-sm text-zinc-400">No sequences yet in this iteration.</p>
+    return (
+      <motion.div className="space-y-2" variants={staggerContainer} initial="hidden" animate="show">
+        {seqs.map(s => (
+          <motion.div key={s.id} variants={fadeUp} transition={springGentle}><SequenceCard seq={s} /></motion.div>
+        ))}
+      </motion.div>
+    )
+  }
+  if (toolName === 'generate_sequence') {
+    const seq = data.sequence as SequenceData | undefined
+    return seq ? <SequenceCard seq={seq} /> : null
+  }
+  if (toolName === 'approve_sequence') {
+    return <SimpleStatus icon={Check} text="Sequence approved" />
+  }
+  if (toolName === 'list_contacts') {
+    const contacts = (data.contacts ?? []) as ContactData[]
+    const total = (data.total as number) ?? contacts.length
+    return <ContactsList contacts={contacts} total={total} />
+  }
+  if (toolName === 'get_custom_columns') {
+    const cols = (data.columns ?? []) as string[]
+    if (!cols.length) return <p className="text-sm text-zinc-400">No custom columns — upload contacts with extra fields to add some.</p>
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {cols.map(c => (
+          <span key={c} className="rounded-md bg-violet-50 text-violet-700 px-2 py-0.5 text-[11px] font-mono">{`{${c}}`}</span>
+        ))}
+      </div>
+    )
+  }
+  if (toolName === 'get_client_stats') {
+    const stats = data.stats as Parameters<typeof StatsSummary>[0]['stats']
+    return <StatsSummary stats={stats} />
+  }
+  if (toolName === 'get_share_link') {
+    return <ShareLinkCard url={String(data.url)} label={String(data.label)} kind={data.kind as 'client' | 'project' | 'sequence'} />
+  }
+  if (toolName === 'list_team_members') {
+    const members = (data.members ?? []) as Array<{ id: string; email: string; invited_by_email: string | null }>
+    if (!members.length) return <p className="text-sm text-zinc-400">No team members.</p>
+    return (
+      <motion.div className="space-y-2" variants={staggerContainer} initial="hidden" animate="show">
+        {members.map(m => (
+          <motion.div key={m.id} variants={fadeUp} transition={springGentle}><TeamMemberCard email={m.email} invitedByEmail={m.invited_by_email} /></motion.div>
+        ))}
+      </motion.div>
+    )
+  }
+  if (toolName === 'invite_team_member') {
+    return <SimpleStatus icon={UserCheck} text={`Invited ${String(data.email)}`} />
+  }
+  if (toolName === 'list_case_studies') {
+    const cs = (data.case_studies ?? []) as CaseStudyData[]
+    if (!cs.length) return <p className="text-sm text-zinc-400">No case studies yet for this client.</p>
+    return (
+      <motion.div className="space-y-2" variants={staggerContainer} initial="hidden" animate="show">
+        {cs.map((c, i) => (
+          <motion.div key={`${c.company}-${i}`} variants={fadeUp} transition={springGentle}><CaseStudyCard cs={c} /></motion.div>
+        ))}
+      </motion.div>
+    )
+  }
+  if (toolName === 'add_case_study') {
+    const cs = data.case_study as CaseStudyData | undefined
+    return cs ? <CaseStudyCard cs={cs} /> : null
+  }
+  if (toolName === 'remove_case_study') {
+    return <SimpleStatus icon={Check} text="Case study removed" />
+  }
+  if (toolName === 'delete_project' || toolName === 'delete_client') {
+    return <SimpleStatus icon={Check} text="Deleted" />
   }
   return null
 }
@@ -166,7 +553,23 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
 
 // ─── Message renderer ────────────────────────────────────────────────────────
 
-function Message({ message }: { message: UIMessage }) {
+function Avatar({ kind, email }: { kind: 'user' | 'assistant'; email?: string | null }) {
+  if (kind === 'assistant') {
+    return (
+      <span className="size-6 rounded-full bg-white flex items-center justify-center shrink-0 ring-1 ring-zinc-200">
+        <span className="size-1.5 rounded-full bg-zinc-900" />
+      </span>
+    )
+  }
+  const initial = email?.[0]?.toUpperCase() || 'U'
+  return (
+    <span className="size-6 rounded-full bg-zinc-900 text-white flex items-center justify-center text-[10px] font-semibold shrink-0">
+      {initial}
+    </span>
+  )
+}
+
+export function Message({ message, userEmail }: { message: UIMessage; userEmail?: string | null }) {
   const isUser = message.role === 'user'
 
   return (
@@ -175,8 +578,9 @@ function Message({ message }: { message: UIMessage }) {
       initial="hidden"
       animate="show"
       transition={springGentle}
-      className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
+      className={`flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}
     >
+      {!isUser && <Avatar kind="assistant" />}
       <div className={`flex flex-col gap-2 max-w-xl ${isUser ? 'items-end' : 'items-start'}`}>
         {message.parts.map((part, i) => {
           if (part.type === 'text' && part.text) {
@@ -231,6 +635,7 @@ function Message({ message }: { message: UIMessage }) {
           return null
         })}
       </div>
+      {isUser && <Avatar kind="user" email={userEmail} />}
     </motion.div>
   )
 }
@@ -246,9 +651,11 @@ const SUGGESTIONS = [
 export function Chat({
   conversationId: initialConvId,
   initialMessages = [],
+  userEmail = null,
 }: {
   conversationId?: string
   initialMessages?: unknown[]
+  userEmail?: string | null
 }) {
   const router = useRouter()
   const convIdRef = useRef<string | null>(initialConvId ?? null)
@@ -292,6 +699,7 @@ export function Chat({
     const text = inputRef.current?.value.trim()
     if (!text || isLoading) return
     inputRef.current!.value = ''
+    autosize(inputRef.current!)
     sendMessage({ text })
   }
 
@@ -332,7 +740,10 @@ export function Chat({
                     variants={fadeUp}
                     transition={springGentle}
                     onClick={() => {
-                      if (inputRef.current) inputRef.current.value = s
+                      if (inputRef.current) {
+                        inputRef.current.value = s
+                        autosize(inputRef.current)
+                      }
                       inputRef.current?.focus()
                     }}
                     className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-600 hover:border-zinc-300 hover:text-zinc-900 transition-all text-left"
@@ -345,7 +756,7 @@ export function Chat({
           )}
         </AnimatePresence>
 
-        {messages.map((m) => <Message key={m.id} message={m} />)}
+        {messages.map((m) => <Message key={m.id} message={m} userEmail={userEmail} />)}
 
         <AnimatePresence>
           {isLoading && messages[messages.length - 1]?.role === 'user' && (
@@ -374,11 +785,17 @@ export function Chat({
         <div className="flex gap-3 items-end">
           <textarea
             ref={inputRef}
+            onInput={(e) => autosize(e.currentTarget)}
             onKeyDown={onKeyDown}
             placeholder="What do you need done…"
             rows={1}
-            className="flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:outline-none resize-none transition-colors"
-            style={{ minHeight: '42px', maxHeight: '120px' }}
+            className="flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:outline-none resize-none leading-relaxed"
+            style={{
+              minHeight: '42px',
+              maxHeight: '240px',
+              overflow: 'auto',
+              transition: 'height 140ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms, background-color 150ms',
+            }}
           />
           <button
             onClick={submit}

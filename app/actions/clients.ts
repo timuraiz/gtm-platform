@@ -43,6 +43,18 @@ export async function getClient(id: string): Promise<Client> {
   return data as Client
 }
 
+export async function getClientShareToken(id: string): Promise<string | null> {
+  const supabase = await createSupabase()
+  const { data } = await supabase.from('clients').select('share_token').eq('id', id).single()
+  return (data?.share_token as string | null) ?? null
+}
+
+export async function getClientByShareToken(token: string): Promise<Client | null> {
+  const supabase = await createSupabase()
+  const { data } = await supabase.from('clients').select('*').eq('share_token', token).single()
+  return (data as Client | null) ?? null
+}
+
 async function resolveLogo(domain: string): Promise<string | null> {
   // Clearbit first — but verify it's a real logo (not their tiny placeholder)
   try {

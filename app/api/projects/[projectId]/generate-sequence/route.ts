@@ -18,6 +18,7 @@ function buildPrompt(
   offerText: string | null,
   icpJson: Record<string, unknown> | null,
   caseStudies: CaseStudy[],
+  customColumns: string[],
 ): string {
   const toneMap = {
     professional: 'formal, polished, business-like',
@@ -63,6 +64,9 @@ Rules for Email:
 - Keep emails under 200 words each
 - Day 0: first email; follow-ups spaced 3–5 days apart`
 
+  const language = (config.language ?? 'English').trim()
+  const userNotes = config.user_notes?.trim()
+
   return `You are a B2B outreach copywriter. Write a ${config.steps_count}-step outreach sequence.
 
 Offer:
@@ -71,11 +75,13 @@ ${icpText}
 ${caseStudiesText}
 
 ${LINKEDIN_PLACEHOLDERS}
-
+${customColumns.length > 0 ? `\nCustom variables (uploaded with the contact list — use them naturally for personalization, only when they fit the message):\n${customColumns.map(c => `- {${c}}`).join('\n')}\n` : ''}
 ${channelInstructions}
 
 Tone: ${toneMap[config.tone]}
 
+Language: ${language} — write all subject lines and message content in ${language}. Keep placeholders like {firstName}, {company} unchanged regardless of language.
+${userNotes ? `\nUser instructions (high priority — follow these closely):\n${userNotes}\n` : ''}
 ${config.channel === 'linkedin' && !config.include_connection_note ? 'CRITICAL: type must be "message" for every single step. Never use "connection_note".\n\n' : ''}Generate exactly ${config.steps_count} steps. Return only a JSON array:
 [
   {
@@ -94,8 +100,8 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> },
 ) {
   const { projectId } = await params
-  const body = await req.json() as { config: SequenceConfig; caseStudies?: CaseStudy[] }
-  const { config, caseStudies = [] } = body
+  const body = await req.json() as { config: SequenceConfig; caseStudies?: CaseStudy[]; customColumns?: string[] }
+  const { config, caseStudies = [], customColumns = [] } = body
 
   const supabase = await createClient()
 
@@ -112,6 +118,7 @@ export async function POST(
     project.offer_text,
     project.icp_json as Record<string, unknown> | null,
     caseStudies,
+    customColumns,
   )
 
   const msg = await anthropic.messages.create({

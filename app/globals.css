@@ -128,3 +128,9 @@
     @apply font-sans;
   }
 }
+
+@keyframes freshPulse {
+  0%   { opacity: 0.0; transform: scale(0.985); }
+  35%  { opacity: 1; transform: scale(1.01); }
+  100% { opacity: 0; transform: scale(1.02); }
+}

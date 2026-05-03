@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
+import { LogOut, Users } from 'lucide-react'
 import {
   DndContext,
   DragOverlay,
@@ -21,7 +22,7 @@ import { ClientLogo } from './client-logo'
 import { CreateClientModal } from './create-client-modal'
 import { fadeUp, staggerContainer, springGentle } from '@/lib/animations'
 
-export type ConversationCreatedEvent = { id: string; title: string }
+export type ConversationCreatedEvent = { id: string; title: string; client_id?: string | null }
 
 // ─── Draggable conversation item ─────────────────────────────────────────────
 
@@ -169,14 +170,68 @@ function UnlinkedDropZone({
   )
 }
 
+// ─── User menu (bottom of sidebar) ──────────────────────────────────────────
+
+function UserMenu({ email }: { email: string }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    if (open) document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [open])
+
+  const initial = email[0]?.toUpperCase() || '?'
+
+  return (
+    <div ref={ref} className="relative border-t border-zinc-100 p-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-zinc-50 transition-colors"
+      >
+        <span className="size-7 rounded-full bg-zinc-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
+          {initial}
+        </span>
+        <span className="flex-1 min-w-0 text-left text-xs text-zinc-700 truncate">{email}</span>
+      </button>
+      {open && (
+        <div className="absolute bottom-full left-2 right-2 mb-1.5 rounded-xl border border-zinc-100 bg-white shadow-lg overflow-hidden">
+          <Link
+            href="/team"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-3 py-2 text-xs text-zinc-700 hover:bg-zinc-50 transition-colors"
+          >
+            <Users size={12} className="text-zinc-400" />
+            Team
+          </Link>
+          <form action="/api/auth/sign-out" method="post">
+            <button
+              type="submit"
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-700 hover:bg-zinc-50 transition-colors text-left border-t border-zinc-50"
+            >
+              <LogOut size={12} className="text-zinc-400" />
+              Sign out
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
 export function Sidebar({
   clients,
   conversations: initialConversations,
+  userEmail,
 }: {
   clients: Client[]
   conversations: Conversation[]
+  userEmail: string | null
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -191,10 +246,16 @@ export function Sidebar({
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const { id, title } = (e as CustomEvent<ConversationCreatedEvent>).detail
+      const { id, title, client_id } = (e as CustomEvent<ConversationCreatedEvent>).detail
       setConversations((prev) => {
-        if (prev.some((c) => c.id === id)) return prev
-        return [{ id, title, client_id: null, messages: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]
+        if (prev.some((c) => c.id === id)) {
+          // If we now have a client_id and it differs, sync it
+          if (client_id !== undefined) {
+            return prev.map(c => c.id === id ? { ...c, client_id: client_id ?? null } : c)
+          }
+          return prev
+        }
+        return [{ id, title, client_id: client_id ?? null, messages: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]
       })
     }
     window.addEventListener('conversation-created', handler)
@@ -316,6 +377,8 @@ export function Sidebar({
                 </motion.div>
               </div>
             </div>
+
+            {userEmail && <UserMenu email={userEmail} />}
           </div>
         </aside>
 

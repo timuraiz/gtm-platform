@@ -1,24 +1,33 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, Pencil, Check, X, ChevronDown, ChevronUp, Save, Trash2, Link, ExternalLink, Plus, CircleCheck } from 'lucide-react'
 import { ChannelIcon } from './channel-icon'
 import type { SequenceConfig, SequenceStep, Sequence, CaseStudy } from '@/app/actions/sequences'
 import { saveSequence, deleteSequence } from '@/app/actions/sequences'
 
-// Highlight LinkedHelper placeholders in message content
+const BUILTIN_PLACEHOLDERS = new Set([
+  'firstName', 'lastName', 'company', 'position', 'industry', 'mutualFirstFullName',
+])
+
+// Highlight LinkedHelper placeholders in message content. Built-in vars stay blue,
+// custom (uploaded with contacts) get violet so the difference is obvious.
 function HighlightedContent({ text }: { text: string }) {
   const parts = text.split(/(\{[^}]+\})/g)
   return (
     <>
-      {parts.map((part, i) =>
-        part.startsWith('{') && part.endsWith('}') ? (
-          <span key={i} className="bg-blue-50 text-blue-600 rounded px-0.5 font-mono text-[11px]">{part}</span>
-        ) : (
-          <span key={i}>{part}</span>
-        )
-      )}
+      {parts.map((part, i) => {
+        if (part.startsWith('{') && part.endsWith('}')) {
+          const name = part.slice(1, -1).trim()
+          const isBuiltin = BUILTIN_PLACEHOLDERS.has(name)
+          const cls = isBuiltin
+            ? 'bg-blue-50 text-blue-600'
+            : 'bg-violet-50 text-violet-700'
+          return <span key={i} className={`${cls} rounded px-0.5 font-mono text-[11px]`}>{part}</span>
+        }
+        return <span key={i}>{part}</span>
+      })}
     </>
   )
 }
@@ -159,20 +168,186 @@ function StepsSlider({ min, max, value, onChange }: { min: number; max: number; 
   )
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function renderInitialHtml(text: string): string {
+  // Convert {placeholder} tokens into styled non-editable spans
+  return escapeHtml(text).replace(
+    /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g,
+    (_m, name) =>
+      `<span contenteditable="false" class="placeholder-chip inline-block rounded-md px-1.5 py-0.5 text-[11px] font-mono bg-violet-50 text-violet-700 mx-px align-baseline">{${escapeHtml(name)}}</span>`,
+  )
+}
+
+function NotesField({
+  value,
+  onChange,
+  customColumns,
+}: {
+  value: string
+  onChange: (v: string) => void
+  customColumns: string[]
+}) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const [hasContent, setHasContent] = useState(value.length > 0)
+  const isFirstRender = useRef(true)
+
+  // Initialize content once. Don't reset on every value change —
+  // the contentEditable div is the source of truth during editing.
+  useEffect(() => {
+    if (isFirstRender.current && ref.current) {
+      ref.current.innerHTML = renderInitialHtml(value)
+      setHasContent(value.length > 0)
+      isFirstRender.current = false
+    }
+  }, [value])
+
+  function readText(): string {
+    return ref.current?.innerText.replace(/​/g, '') ?? ''
+  }
+
+  function syncToState() {
+    const text = readText()
+    setHasContent(text.length > 0)
+    onChange(text)
+  }
+
+  function insertChipAtCursor(name: string) {
+    const span = document.createElement('span')
+    span.contentEditable = 'false'
+    span.className = 'placeholder-chip inline-block rounded-md px-1.5 py-0.5 text-[11px] font-mono bg-violet-50 text-violet-700 mx-px align-baseline'
+    span.textContent = `{${name}}`
+
+    const sel = window.getSelection()
+    let range: Range
+    if (sel && sel.rangeCount && ref.current?.contains(sel.anchorNode)) {
+      range = sel.getRangeAt(0)
+      range.deleteContents()
+    } else {
+      range = document.createRange()
+      range.selectNodeContents(ref.current!)
+      range.collapse(false)
+    }
+    range.insertNode(span)
+    // Add a zero-width space after so the caret can land outside the chip
+    const after = document.createTextNode('​')
+    span.after(after)
+    range.setStartAfter(after)
+    range.setEndAfter(after)
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    ref.current?.focus()
+    syncToState()
+  }
+
+  return (
+    <div className="space-y-1 col-span-2">
+      <label className="text-xs text-zinc-500">Custom instructions <span className="text-zinc-400 font-normal">(optional)</span></label>
+      <div className="relative">
+        <div
+          ref={ref}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={syncToState}
+          onBlur={syncToState}
+          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={e => {
+            e.preventDefault()
+            setDragOver(false)
+            const text = e.dataTransfer.getData('text/plain')
+            const m = text.match(/^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/)
+            if (m) {
+              insertChipAtCursor(m[1])
+              return
+            }
+            if (text && ref.current) {
+              const sel = window.getSelection()
+              const node = document.createTextNode(text)
+              if (sel && sel.rangeCount && ref.current.contains(sel.anchorNode)) {
+                const range = sel.getRangeAt(0)
+                range.deleteContents()
+                range.insertNode(node)
+                range.setStartAfter(node)
+                range.setEndAfter(node)
+                sel.removeAllRanges()
+                sel.addRange(range)
+              } else {
+                ref.current.appendChild(node)
+              }
+              ref.current.focus()
+              syncToState()
+            }
+          }}
+          className={`w-full text-xs px-2.5 py-1.5 border rounded-lg bg-white focus:outline-none leading-relaxed min-h-[68px] transition-colors whitespace-pre-wrap break-words ${
+            dragOver ? 'border-violet-400 bg-violet-50/40' : 'border-zinc-200 focus-within:border-zinc-400'
+          }`}
+        />
+        {!hasContent && !dragOver && (
+          <div className="absolute inset-0 px-2.5 py-1.5 text-xs text-zinc-400 pointer-events-none leading-relaxed">
+            {customColumns.length > 0
+              ? `Drag a variable in or type — e.g. "Reference {${customColumns[0]}} in step 1"`
+              : 'Anything specific you want — angles to use, things to avoid, references, voice cues…'}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PlaceholderChip({ name, accent = false }: { name: string; accent?: boolean }) {
+  const [copied, setCopied] = useState(false)
+  const text = `{${name}}`
+  function copy() {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1200)
+  }
+  function onDragStart(e: React.DragEvent<HTMLButtonElement>) {
+    e.dataTransfer.setData('text/plain', text)
+    e.dataTransfer.effectAllowed = 'copy'
+  }
+  return (
+    <button
+      type="button"
+      draggable
+      onDragStart={onDragStart}
+      onClick={copy}
+      title="Click to copy · drag into instructions"
+      className={`rounded-md px-2 py-0.5 text-[11px] font-mono cursor-grab active:cursor-grabbing transition-colors select-none ${
+        accent
+          ? 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+          : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+      }`}
+    >
+      {copied ? '✓ copied' : text}
+    </button>
+  )
+}
+
 function ConfigForm({
   onGenerate,
   loading,
   caseStudies,
+  iterationChannel,
+  customColumns,
 }: {
   onGenerate: (config: SequenceConfig, name: string, selectedCaseStudies: CaseStudy[]) => void
   loading: boolean
   caseStudies: CaseStudy[]
+  iterationChannel: 'linkedin' | 'email'
+  customColumns: string[]
 }) {
   const [config, setConfig] = useState<SequenceConfig>({
-    channel: 'linkedin',
+    channel: iterationChannel,
     steps_count: 4,
-    include_connection_note: true,
+    include_connection_note: iterationChannel === 'linkedin',
     tone: 'professional',
+    language: 'English',
+    user_notes: '',
   })
   const [name, setName] = useState('')
   const [selectedIdx, setSelectedIdx] = useState<Set<number>>(() => new Set(caseStudies.map((_, i) => i)))
@@ -205,19 +380,27 @@ function ConfigForm({
 
         <div className="space-y-1">
           <label className="text-xs text-zinc-500">Channel</label>
-          <div className="flex rounded-lg border border-zinc-200 bg-white overflow-hidden">
+          <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium ${
+            iterationChannel === 'linkedin'
+              ? 'border-blue-100 bg-blue-50/40 text-blue-700'
+              : 'border-orange-100 bg-orange-50/40 text-orange-700'
+          }`}>
+            <ChannelIcon channel={iterationChannel} size={11} />
+            {iterationChannel === 'linkedin' ? 'LinkedIn' : 'Email'}
+            <span className="ml-auto text-[10px] text-zinc-400 font-normal">from iteration</span>
+            {/* hidden buttons preserved to keep mapping unchanged */}
             {(['linkedin', 'email'] as const).map(c => (
               <button
                 key={c}
+                type="button"
                 onClick={() => setConfig(cfg => ({
                   ...cfg,
                   channel: c,
                   include_connection_note: c === 'linkedin' ? cfg.include_connection_note : false,
                 }))}
-                className={`flex-1 text-xs py-1.5 font-medium transition-colors capitalize ${config.channel === c ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-700'
-                  }`}
+                className="hidden"
               >
-                {c === 'linkedin' ? 'LinkedIn' : 'Email'}
+                {c}
               </button>
             ))}
           </div>
@@ -252,6 +435,22 @@ function ConfigForm({
           </div>
         </div>
 
+        <div className="space-y-1">
+          <label className="text-xs text-zinc-500">Language</label>
+          <select
+            value={config.language ?? 'English'}
+            onChange={e => setConfig(cfg => ({ ...cfg, language: e.target.value }))}
+            className="w-full text-xs pl-2.5 pr-8 py-1.5 border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-zinc-400 appearance-none bg-no-repeat bg-[right_0.625rem_center] bg-[length:0.75rem_0.75rem]"
+            style={{
+              backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 8 10 12 14 8'/%3E%3C/svg%3E\")",
+            }}
+          >
+            {['English', 'Russian', 'Spanish', 'French', 'German', 'Portuguese', 'Italian', 'Polish', 'Dutch', 'Ukrainian'].map(l => (
+              <option key={l} value={l}>{l}</option>
+            ))}
+          </select>
+        </div>
+
         {config.channel === 'linkedin' && (
           <div className="flex items-center gap-2 col-span-2">
             <button
@@ -266,6 +465,42 @@ function ConfigForm({
             <span className="text-xs text-zinc-600">Include connection request note</span>
           </div>
         )}
+
+        <div className="space-y-2 col-span-2">
+          <label className="text-xs text-zinc-500">Available variables</label>
+          <div className="rounded-lg border border-zinc-200 bg-white p-2.5 space-y-2">
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-zinc-400 font-medium mb-1.5">Built-in</p>
+              <div className="flex flex-wrap gap-1">
+                {['firstName', 'lastName', 'company', 'position', 'industry'].map(p => (
+                  <PlaceholderChip key={p} name={p} />
+                ))}
+              </div>
+            </div>
+            <div className="pt-2 border-t border-zinc-50">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-400 font-medium mb-1.5">
+                From your contacts
+                {customColumns.length > 0 && <span className="text-zinc-300 font-normal ml-1">({customColumns.length})</span>}
+              </p>
+              {customColumns.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {customColumns.map(c => <PlaceholderChip key={c} name={c} accent />)}
+                </div>
+              ) : (
+                <p className="text-[11px] text-zinc-400 italic">No custom columns uploaded yet — upload a CSV with extra columns and they&apos;ll appear here</p>
+              )}
+            </div>
+            <p className="text-[11px] text-zinc-400 pt-1 border-t border-zinc-50">
+              Use these in the message text or the instructions below — Claude will keep them as <span className="font-mono text-zinc-500">{'{name}'}</span>, and we replace per contact at send time.
+            </p>
+          </div>
+        </div>
+
+        <NotesField
+          value={config.user_notes ?? ''}
+          onChange={v => setConfig(cfg => ({ ...cfg, user_notes: v }))}
+          customColumns={customColumns}
+        />
       </div>
 
       {caseStudies.length > 0 && (
@@ -415,10 +650,16 @@ export function SequenceBuilder({
   projectId,
   initialSequences,
   caseStudies,
+  iterationId,
+  iterationChannel,
+  customColumns = [],
 }: {
   projectId: string
   initialSequences: Sequence[]
   caseStudies: CaseStudy[]
+  iterationId: string
+  iterationChannel: 'linkedin' | 'email'
+  customColumns?: string[]
 }) {
   // Order ASC so v1 is the oldest version
   const [sequences, setSequences] = useState<Sequence[]>(
@@ -431,6 +672,16 @@ export function SequenceBuilder({
   const [pendingConfig, setPendingConfig] = useState<{ config: SequenceConfig; name: string; caseStudies: CaseStudy[] } | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // Sync when parent passes a new initialSequences list (e.g., iteration switch)
+  useEffect(() => {
+    const sorted = [...initialSequences].sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at))
+    setSequences(sorted)
+    setActiveIdx(sorted.length ? sorted.length - 1 : 0)
+    setCreatingNew(sorted.length === 0)
+    setPendingSteps(null)
+    setPendingConfig(null)
+  }, [initialSequences, iterationId])
+
   async function handleGenerate(config: SequenceConfig, name: string, selectedCaseStudies: CaseStudy[]) {
     setGenerating(true)
     setPendingSteps(null)
@@ -438,7 +689,7 @@ export function SequenceBuilder({
       const res = await fetch(`/api/projects/${projectId}/generate-sequence`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config, caseStudies: selectedCaseStudies }),
+        body: JSON.stringify({ config, caseStudies: selectedCaseStudies, customColumns }),
       })
       const data = await res.json()
       if (data.steps) {
@@ -461,6 +712,7 @@ export function SequenceBuilder({
         pendingConfig.config,
         pendingSteps,
         pendingConfig.caseStudies,
+        iterationId,
       )
       setSequences(prev => {
         const next = [...prev, seq]
@@ -540,7 +792,7 @@ export function SequenceBuilder({
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               className="space-y-6"
             >
-              <ConfigForm onGenerate={handleGenerate} loading={generating} caseStudies={caseStudies} />
+              <ConfigForm onGenerate={handleGenerate} loading={generating} caseStudies={caseStudies} iterationChannel={iterationChannel} customColumns={customColumns} />
 
               {pendingSteps && pendingConfig && (
                 <div className="space-y-3">

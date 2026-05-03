@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { type Project } from '@/app/actions/projects'
 import { CreateProjectForm } from './create-project-form'
 import { fadeUp, scaleIn, staggerContainer, springGentle } from '@/lib/animations'
+import { useFreshlyCreated } from '@/lib/use-freshly-created'
 
 function IcpTags({ items, color }: { items: string[]; color: string }) {
   return (
@@ -21,9 +22,16 @@ function IcpTags({ items, color }: { items: string[]; color: string }) {
   )
 }
 
-function ProjectCard({ project, clientId }: { project: Project; clientId: string }) {
+function ProjectCard({ project, clientId, fresh }: { project: Project; clientId: string; fresh: boolean }) {
   return (
-    <motion.div variants={fadeUp} transition={springGentle} className="h-full">
+    <motion.div variants={fadeUp} transition={springGentle} className="h-full relative">
+      {fresh && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -inset-[3px] rounded-[14px] ring-2 ring-emerald-300"
+          style={{ animation: 'freshPulse 1.6s ease-out 2' }}
+        />
+      )}
       <Link
         href={`/clients/${clientId}/projects/${project.id}`}
         className="flex flex-col h-full rounded-xl border border-zinc-200 bg-white p-4 space-y-3 hover:border-zinc-300 hover:shadow-sm transition-all"
@@ -55,6 +63,7 @@ function ProjectCard({ project, clientId }: { project: Project; clientId: string
 export function ClientProjects({ clientId, projects }: { clientId: string; projects: Project[] }) {
   const [showForm, setShowForm] = useState(false)
   const router = useRouter()
+  const fresh = useFreshlyCreated('project')
 
   return (
     <div className="space-y-4">
@@ -106,7 +115,7 @@ export function ClientProjects({ clientId, projects }: { clientId: string; proje
         animate="show"
       >
         {projects.map((project) => (
-          <ProjectCard key={project.id} project={project} clientId={clientId} />
+          <ProjectCard key={project.id} project={project} clientId={clientId} fresh={fresh.has(project.id)} />
         ))}
       </motion.div>
     </div>

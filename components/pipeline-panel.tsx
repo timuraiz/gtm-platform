@@ -343,9 +343,10 @@ function LoadMorePanel({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function PipelinePanel({
-  projectId, icp, onRunCreated, onDone,
+  projectId, iterationId, icp, onRunCreated, onDone,
 }: {
   projectId: string
+  iterationId: string
   icp?: Record<string, unknown> | null
   onRunCreated?: (runId: string) => void
   onDone?: () => void
@@ -419,7 +420,7 @@ export function PipelinePanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectId, step: stepId, runId,
+          projectId, iterationId, step: stepId, runId,
           page: opts.page ?? 1,
           seenDomains: opts.seenDomains ?? [],
           domainsOverride: opts.domainsOverride,
@@ -465,7 +466,7 @@ export function PipelinePanel({
     const res = await fetch('/api/pipeline/step', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, step: 'extract_people', runId, seenDomains, domainsOverride: domains }),
+      body: JSON.stringify({ projectId, iterationId, step: 'extract_people', runId, seenDomains, domainsOverride: domains }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error ?? 'Step failed')

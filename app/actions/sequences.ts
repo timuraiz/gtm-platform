@@ -15,6 +15,8 @@ export type SequenceConfig = {
   steps_count: number
   include_connection_note: boolean
   tone: 'professional' | 'casual' | 'direct'
+  language?: string
+  user_notes?: string
 }
 
 export type CaseStudy = {
@@ -27,6 +29,7 @@ export type CaseStudy = {
 export type Sequence = {
   id: string
   project_id: string
+  iteration_id: string | null
   name: string
   channel: 'linkedin' | 'email'
   config: SequenceConfig
@@ -39,13 +42,15 @@ export type Sequence = {
   updated_at: string
 }
 
-export async function getSequences(projectId: string): Promise<Sequence[]> {
+export async function getSequences(projectId: string, iterationId?: string): Promise<Sequence[]> {
   const supabase = await createClient()
-  const { data } = await supabase
+  let query = supabase
     .from('sequences')
     .select('*')
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
+  if (iterationId) query = query.eq('iteration_id', iterationId)
+  const { data } = await query
   return (data ?? []) as Sequence[]
 }
 
@@ -56,11 +61,12 @@ export async function saveSequence(
   config: SequenceConfig,
   steps: SequenceStep[],
   usedCaseStudies: CaseStudy[],
+  iterationId: string,
 ): Promise<Sequence> {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('sequences')
-    .insert({ project_id: projectId, name, channel, config, steps, used_case_studies: usedCaseStudies })
+    .insert({ project_id: projectId, name, channel, config, steps, used_case_studies: usedCaseStudies, iteration_id: iterationId })
     .select('*')
     .single()
   if (error) throw new Error(error.message)
@@ -144,6 +150,39 @@ export type SequenceVersionInfo = {
   name: string
   share_token: string
   created_at: string
+}
+
+export type ProjectShareInfo = {
+  id: string
+  name: string
+  share_token: string
+  contacts_approved: boolean
+}
+
+export async function getProjectByShareToken(token: string): Promise<ProjectShareInfo | null> {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('projects')
+    .select('id, name, share_token, contacts_approved')
+    .eq('share_token', token)
+    .single()
+  return (data ?? null) as ProjectShareInfo | null
+}
+
+export async function setProjectContactsApproval(projectId: string, approved: boolean): Promise<void> {
+  const supabase = await createClient()
+  await supabase.from('projects').update({ contacts_approved: approved }).eq('id', projectId)
+  revalidatePath('.')
+}
+
+export async function getProjectShareToken(projectId: string): Promise<string | null> {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('projects')
+    .select('share_token')
+    .eq('id', projectId)
+    .single()
+  return (data?.share_token as string | null) ?? null
 }
 
 export async function getProjectSequenceVersions(projectId: string): Promise<SequenceVersionInfo[]> {
