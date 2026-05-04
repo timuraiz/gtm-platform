@@ -194,6 +194,7 @@ async function stepApolloSearch(
           ...(fundingStages.length ? { organization_latest_funding_stage_cd: fundingStages } : {}),
           page, per_page: 50,
         }),
+        signal: AbortSignal.timeout(20_000),
       })
       if (!res.ok) {
         const err = await res.text().catch(() => '')

@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 
 const APOLLO_BASE = 'https://api.apollo.io/api/v1'
 
-export const maxDuration = 60
+export const maxDuration = 300
 
 function db() {
   return createServerClient(
@@ -143,6 +143,8 @@ async function runApolloSearch(filters: Record<string, unknown>, icp: Record<str
           ...(fundingStages.length ? { organization_latest_funding_stage_cd: fundingStages } : {}),
           page, per_page: 50,
         }),
+        // Per-keyword timeout: don't let one slow keyword stall the whole step
+        signal: AbortSignal.timeout(20_000),
       })
       if (!res.ok) {
         const err = await res.text().catch(() => '')
