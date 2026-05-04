@@ -364,6 +364,7 @@ export function PipelinePanel({
   const [prospectedDomains, setProspectedDomains] = useState<Set<string>>(new Set())
   const [loadMoreRunning, setLoadMoreRunning] = useState(false)
   const [lastLoadResult, setLastLoadResult] = useState<{ count: number; domains: number } | null>(null)
+  const [polling, setPolling] = useState(false)
 
   // Resume from URL or auto-pick the latest project run
   useEffect(() => {
@@ -384,7 +385,7 @@ export function PipelinePanel({
       const peopleStep = run.steps.find(s => s.name === 'extract_people')
       if (peopleStep) {
         const a = peopleStep.artifact as Record<string, unknown>
-        setTotalContacts((a?.total as number) ?? 0)
+        setTotalContacts((a?.contacts_total_in_db as number) ?? (a?.total as number) ?? 0)
         const classifyStep = run.steps.find(s => s.name === 'classify')
         if (classifyStep && a?.domains_processed) {
           const results = (classifyStep.artifact as Record<string, unknown>)?.results as Array<{ domain: string; is_target: boolean }> ?? []
@@ -392,6 +393,8 @@ export function PipelinePanel({
           setProspectedDomains(new Set(allTargets.slice(0, a.domains_processed as number)))
         }
       }
+      // If the run is still running, resume polling so the user sees progress live
+      if (run.status === 'running') setPolling(true)
     }).finally(() => setLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -409,6 +412,67 @@ export function PipelinePanel({
     const params = new URLSearchParams(searchParams.toString())
     if (id) { params.set('runId', id) } else { params.delete('runId') }
     router.replace(`?${params.toString()}`, { scroll: false })
+  }
+
+  // Poll workflow run state from pipeline_runs.steps every 3s while polling=true
+  useEffect(() => {
+    if (!polling || !runId) return
+    let cancelled = false
+    const tick = async () => {
+      const run = await getRun(runId)
+      if (cancelled || !run) return
+      const newStates: Partial<Record<StepId, StepState>> = {}
+      for (const step of run.steps) {
+        newStates[step.name as StepId] = { status: step.status, artifact: step.artifact }
+      }
+      // Mark in-flight step
+      const completed = STEPS.filter(s => newStates[s.id]?.status === 'done').map(s => s.id)
+      const next = STEPS.find(s => !completed.includes(s.id))?.id
+      if (next && run.status === 'running') {
+        newStates[next] = newStates[next] ?? { status: 'running' }
+        setStartTimes(prev => prev[next] ? prev : { ...prev, [next]: Date.now() })
+      }
+      setStates(newStates)
+      const last = run.steps.at(-1)
+      if (last) setExpanded(prev => prev.has(last.name as StepId) ? prev : new Set([...prev, last.name as StepId]))
+
+      const peopleStep = run.steps.find(s => s.name === 'extract_people')
+      if (peopleStep) {
+        const a = peopleStep.artifact as Record<string, unknown>
+        setTotalContacts((a?.contacts_total_in_db as number) ?? (a?.total as number) ?? 0)
+      }
+
+      if (run.status === 'done' || run.status === 'error') {
+        setPolling(false)
+        onDone?.()
+      }
+    }
+    void tick()
+    const id = setInterval(tick, 3000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [polling, runId, onDone])
+
+  async function startPipeline() {
+    setPipelineStarted(true)
+    setStates({})
+    setExpanded(new Set())
+    try {
+      const res = await fetch('/api/pipeline/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, iterationId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed to start pipeline')
+      setRunId(data.runId)
+      setUrl(data.runId)
+      onRunCreated?.(data.runId)
+      setPolling(true)
+    } catch (err) {
+      console.error('[startPipeline]', err)
+      alert(err instanceof Error ? err.message : 'Failed to start pipeline')
+      setPipelineStarted(false)
+    }
   }
 
   async function runStep(stepId: StepId, opts: { page?: number; seenDomains?: string[]; domainsOverride?: string[] } = {}) {
