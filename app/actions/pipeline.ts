@@ -134,28 +134,35 @@ export async function uploadContacts(
   if (rows.length === 0) return { inserted: 0, skipped: 0 }
   const supabase = await createClient()
 
-  // Resolve / create companies by domain
+  // Resolve / create companies by domain (global) + attach to project
   const domains = [...new Set(rows.map(r => r.company_domain?.trim()).filter(Boolean) as string[])]
   const domainToCompanyId: Record<string, string> = {}
   if (domains.length > 0) {
-    const { data: existing } = await supabase
+    // Upsert into global companies — preserves existing metadata if present
+    const newCompanies = domains.map(d => {
+      const sample = rows.find(r => r.company_domain?.trim() === d)
+      return { domain: d, name: sample?.company_name ?? d }
+    })
+    await supabase
       .from('companies')
-      .select('id, domain, name')
-      .eq('project_id', projectId)
-      .in('domain', domains)
-    for (const c of existing ?? []) domainToCompanyId[c.domain as string] = c.id as string
+      .upsert(newCompanies, { onConflict: 'domain', ignoreDuplicates: true })
 
-    const missing = domains.filter(d => !domainToCompanyId[d])
-    if (missing.length > 0) {
-      const newCompanies = missing.map(d => {
-        const sample = rows.find(r => r.company_domain === d)
-        return { project_id: projectId, domain: d, name: sample?.company_name ?? d }
-      })
-      const { data: inserted } = await supabase
-        .from('companies')
-        .upsert(newCompanies, { onConflict: 'project_id,domain' })
-        .select('id, domain')
-      for (const c of inserted ?? []) domainToCompanyId[c.domain as string] = c.id as string
+    const { data: resolved } = await supabase
+      .from('companies')
+      .select('id, domain')
+      .in('domain', domains)
+    for (const c of resolved ?? []) domainToCompanyId[c.domain as string] = c.id as string
+
+    // Attach to project via project_companies (source='csv' marks origin)
+    const attachRows = Object.values(domainToCompanyId).map(company_id => ({
+      project_id: projectId,
+      company_id,
+      source: 'csv',
+    }))
+    if (attachRows.length > 0) {
+      await supabase
+        .from('project_companies')
+        .upsert(attachRows, { onConflict: 'project_id,company_id', ignoreDuplicates: true })
     }
   }
 

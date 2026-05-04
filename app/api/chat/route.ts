@@ -27,6 +27,34 @@ App data model:
 
 When the user asks to do something, just do it via tools. Don't ask for confirmation on safe actions.
 
+When the user asks about pipeline / company-quality / ICP refinement (e.g. "почему эти компании в результатах?", "improve ICP", "filter out X"):
+1. Read current state with get_project_icp + get_classify_summary
+2. Read specific examples with list_classified_companies (status='rejected' or 'qualified')
+3. Spot patterns in reasoning + segments — what makes companies fit/not fit
+4. Propose ICP refinements with a concrete diff (which fields you'll change and why)
+5. Apply via update_project_icp — pass the FULL new icp_json, not a patch. ICP is the single source of truth visible to the user in the IcpEditor on the project page.
+6. Validate: reclassify_project_companies on a sample to check new ICP catches the bad ones
+7. Tell the user to click "Start Pipeline" to discover new companies under the updated ICP
+
+ICP fields you can modify (all live under icp_json) — every field below is rendered visibly in the IcpEditor on the project page, so use these:
+- segments — Apollo keyword search phrases. Format: [{"name":"main","keywords":["fintech app","developer tools","B2B SaaS"]}]. Use product/industry words. AVOID fundraising-language ("recently funded", "seed raised") — those phrases live on VC websites and pull VC firms. The IcpEditor surfaces these as "Apollo keywords" chips.
+- titles — flat array of target roles ["CEO","Founder","Head of Marketing"]. Shown as "Target roles" in the editor.
+- industries — list of broad industry labels ["SaaS","Fintech","HealthTech"].
+- funding_rounds — list like ["seed","series_a","series_b"] (lowercase, underscore). Maps to Apollo structured filter.
+- employee_ranges — list of "min,max" strings: ["1,10","11,50","51,200","201,500","501,1000","1001,10000"]. CRITICAL: use comma not dash. The editor maps these to "Company size" chips and Apollo expects this format.
+- geo — list of locations ["United States","United Kingdom"]. Shown as "Geography".
+- apollo_filters.locations — mirror of geo for downstream code; set both to the same values.
+- exclusions — phrases the classifier uses to reject (e.g. "VC funds", "Branding studios", "Accelerators"). Strong signal for classify step.
+- trigger — single string for trigger signal.
+
+CRITICAL — you CANNOT run the pipeline. There is no tool to trigger apollo_search / scrape / extract_people.
+Your tools only let you (a) read project state, (b) mutate ICP/qualification, (c) reclassify existing companies. New companies from Apollo come ONLY when the user clicks "Start Pipeline" in the UI.
+
+After applying ICP changes, NEVER claim "pipeline started" or "🚀 running". Instead say:
+- "ICP updated. Reclassified existing companies — N qualified, M rejected. To find NEW companies matching the updated ICP, click Start Pipeline in the UI."
+
+Do NOT call set_iteration_status('running') as a substitute for running the pipeline.
+
 CRITICAL: After calling a tool, do NOT repeat or summarize the tool results in text — the UI renders them automatically as visual cards. Only add a short follow-up question if needed (e.g. "Want to launch the pipeline now?"). Never output tables, lists, or JSON of the tool data.`
 
 async function resolveLogo(domain: string): Promise<string | null> {
@@ -518,6 +546,111 @@ export async function POST(req: Request) {
           const { data } = await supabase.from('sequences').select('name, share_token').eq('id', id).single()
           if (!data?.share_token) return { error: 'Sequence not found' }
           return { kind, label: data.name, url: `${origin}/share/${data.share_token}` }
+        },
+      }),
+
+      // ─── ICP / PIPELINE TUNING ───────────────────────────────────────────────
+      get_project_icp: tool({
+        description: 'Read the ICP (icp_json) and Apollo keyword overrides (run_config_json.keywords) for a project. Use before suggesting ICP refinements.',
+        inputSchema: z.object({ project_id: z.string() }),
+        execute: async ({ project_id }) => {
+          const { data } = await supabase.from('projects').select('id, name, offer_text, icp_json, run_config_json').eq('id', project_id).single()
+          if (!data) return { error: 'Project not found' }
+          return {
+            project_id: data.id,
+            name: data.name,
+            offer_text: data.offer_text,
+            icp: data.icp_json,
+            keyword_overrides: (data.run_config_json as { keywords?: string[] } | null)?.keywords ?? [],
+          }
+        },
+      }),
+
+      update_project_icp: tool({
+        description: 'Replace the project ICP (icp_json) with a new object. Pass the FULL new ICP, not a patch. Use after reading the current ICP and deciding what to change.',
+        inputSchema: z.object({
+          project_id: z.string(),
+          icp: z.record(z.string(), z.unknown()).describe('Full new icp_json — typically a merged version of the current ICP plus your refinements'),
+        }),
+        execute: async ({ project_id, icp }) => {
+          const { error } = await supabase.from('projects').update({ icp_json: icp }).eq('id', project_id)
+          if (error) return { error: error.message }
+          bumpCache()
+          return { success: true, icp }
+        },
+      }),
+
+get_classify_summary: tool({
+        description: 'Aggregated classification summary for a project: counts per status, segment frequencies, sample rejection reasons. Use to spot patterns in why companies got rejected.',
+        inputSchema: z.object({ project_id: z.string() }),
+        execute: async ({ project_id }) => {
+          const { data: rows } = await supabase
+            .from('project_companies')
+            .select('qualification_status, segment, reasoning, source, companies(domain, name)')
+            .eq('project_id', project_id)
+          const list = (rows ?? []) as unknown as Array<{
+            qualification_status: string | null
+            segment: string | null
+            reasoning: string | null
+            source: string
+            companies: { domain: string; name: string | null } | null
+          }>
+          const counts = { qualified: 0, rejected: 0, unknown: 0 }
+          const segments: Record<string, number> = {}
+          const rejection_samples: Array<{ domain: string; name: string | null; segment: string | null; reasoning: string | null }> = []
+          for (const r of list) {
+            const s = r.qualification_status ?? 'unknown'
+            counts[s as keyof typeof counts] = (counts[s as keyof typeof counts] ?? 0) + 1
+            if (r.segment) segments[r.segment] = (segments[r.segment] ?? 0) + 1
+            if (s === 'rejected' && rejection_samples.length < 12 && r.companies) {
+              rejection_samples.push({ domain: r.companies.domain, name: r.companies.name, segment: r.segment, reasoning: r.reasoning })
+            }
+          }
+          return { total: list.length, counts, segments, rejection_samples }
+        },
+      }),
+
+      list_classified_companies: tool({
+        description: 'List companies in a project filtered by qualification status. Returns up to 30 with segment + reasoning. Use to inspect specific patterns.',
+        inputSchema: z.object({
+          project_id: z.string(),
+          status: z.enum(['qualified', 'rejected', 'unknown', 'all']).default('all'),
+          source: z.enum(['pipeline', 'csv', 'manual', 'all']).default('all'),
+        }),
+        execute: async ({ project_id, status, source }) => {
+          let q = supabase
+            .from('project_companies')
+            .select('id, qualification_status, is_target, confidence, segment, reasoning, source, companies(domain, name, logo_url)')
+            .eq('project_id', project_id)
+            .limit(30)
+          if (status !== 'all') q = q.eq('qualification_status', status)
+          if (source !== 'all') q = q.eq('source', source)
+          const { data } = await q
+          const list = (data ?? []) as unknown as Array<{
+            id: string; qualification_status: string; is_target: boolean; confidence: number | null;
+            segment: string | null; reasoning: string | null; source: string;
+            companies: { domain: string; name: string | null; logo_url: string | null } | null
+          }>
+          return {
+            companies: list.map(r => ({
+              id: r.id, domain: r.companies?.domain, name: r.companies?.name,
+              status: r.qualification_status, confidence: r.confidence, segment: r.segment, reasoning: r.reasoning, source: r.source,
+            })),
+          }
+        },
+      }),
+
+      reclassify_project_companies: tool({
+        description: 'Re-run Claude classification on selected project_companies. Use after updating the ICP to validate the new criteria. Pass project_company IDs (from list_classified_companies) — not company IDs.',
+        inputSchema: z.object({
+          project_id: z.string(),
+          project_company_ids: z.array(z.string()).describe('IDs from project_companies (the join table), not companies.id'),
+        }),
+        execute: async ({ project_id, project_company_ids }) => {
+          const { classifyCompanies } = await import('@/app/actions/companies')
+          const result = await classifyCompanies(project_id, project_company_ids)
+          bumpCache()
+          return result
         },
       }),
 

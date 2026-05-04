@@ -48,42 +48,7 @@ async function scrape(url: string) {
   } catch { return '' }
 }
 
-function isUrl(s: string) {
-  try { new URL(s); return true } catch { return false }
-}
-
 // ─── Step handlers ────────────────────────────────────────────────────────────
-
-async function runExtractIcp(project: Record<string, unknown>) {
-  const skill = await fetchSkill('offer-extraction')
-
-  // Build rich context from existing project data
-  const offerText = project.offer_text as string | null
-  let offerContext = ''
-
-  if (offerText && isUrl(offerText)) {
-    const scraped = await scrape(offerText)
-    offerContext = scraped.length > 200
-      ? `Website content (${offerText}):\n${scraped}`
-      : `Website URL: ${offerText} (could not scrape)`
-  } else if (offerText) {
-    offerContext = `Offer description:\n${offerText}`
-  }
-
-  const existingIcp = project.icp_json as Record<string, unknown> | null
-  const icpContext = existingIcp && Object.keys(existingIcp).length > 0
-    ? `\n\nExisting ICP (already extracted, use as primary source):\n${JSON.stringify(existingIcp, null, 2)}`
-    : ''
-
-  const prompt = `Project name: ${project.name as string}
-${offerContext}${icpContext}
-
-Extract a complete ICP. If existing ICP is provided, enrich and expand it — don't ignore it.
-Return ONLY valid JSON, no markdown.`
-
-  const raw = await claude(skill, prompt)
-  return JSON.parse(raw)
-}
 
 async function runGenerateFilters(icp: unknown) {
   const skill = await fetchSkill('apollo-filter-mapping')
@@ -222,47 +187,194 @@ type ApolloCompany = {
   logo_url: string | null
 }
 
+const SCRAPE_TTL_DAYS = Number(process.env.COMPANY_SCRAPE_TTL_DAYS ?? 30)
+
 async function runScrape(companies: ApolloCompany[]) {
-  // Prioritize companies with weak Apollo metadata — those benefit most from scraping
+  // Pre-flight: hit global companies cache. Skip rows whose scraped_at is fresh.
+  const supabase = db()
+  const domains = companies.map(c => c.domain)
+  const { data: cached } = await supabase
+    .from('companies')
+    .select('domain, scraped_text, scraped_at')
+    .in('domain', domains)
+  const cachedByDomain = new Map(
+    (cached ?? []).map((r: { domain: string; scraped_text: string | null; scraped_at: string | null }) => [r.domain, r]),
+  )
+  const cutoff = Date.now() - SCRAPE_TTL_DAYS * 86_400_000
+  const isFresh = (scrapedAt: string | null) =>
+    !!scrapedAt && new Date(scrapedAt).getTime() > cutoff
+
+  // Prioritize: weak Apollo metadata first (benefit most from scrape)
   const weak = companies.filter(c => (c.description?.length ?? 0) < 80)
   const strong = companies.filter(c => (c.description?.length ?? 0) >= 80)
   const toScrape = [...weak, ...strong].slice(0, 50)
+
+  let cacheHits = 0
   const scraped = await Promise.all(
     toScrape.map(async (c) => {
+      const cachedRow = cachedByDomain.get(c.domain)
+      if (cachedRow && isFresh(cachedRow.scraped_at) && (cachedRow.scraped_text?.length ?? 0) > 100) {
+        cacheHits++
+        return { ...c, scraped_text: cachedRow.scraped_text!, scraped_ok: true, from_cache: true }
+      }
       const text = await scrape(`https://${c.domain}`)
-      return { ...c, scraped_text: text, scraped_ok: text.length > 100 }
+      return { ...c, scraped_text: text, scraped_ok: text.length > 100, from_cache: false }
     })
   )
-  // Attach empty scraped_text to remaining companies so classify sees everything
-  const rest = companies.slice(50).map(c => ({ ...c, scraped_text: '', scraped_ok: false }))
+
+  // Persist freshly-scraped rows to global companies (upsert by domain)
+  const freshlyScraped = scraped.filter(r => !r.from_cache && r.scraped_ok)
+  if (freshlyScraped.length > 0) {
+    const now = new Date().toISOString()
+    await supabase.from('companies').upsert(
+      freshlyScraped.map(r => ({
+        domain: r.domain,
+        name: r.name,
+        logo_url: r.logo_url,
+        scraped_text: r.scraped_text,
+        scraped_at: now,
+        updated_at: now,
+      })),
+      { onConflict: 'domain' },
+    )
+  }
+
+  const rest = companies.slice(50).map(c => ({ ...c, scraped_text: '', scraped_ok: false, from_cache: false }))
   const all = [...scraped, ...rest]
 
   return {
     total: all.length,
     scraped: scraped.length,
     ok: scraped.filter(r => r.scraped_ok).length,
-    companies: all.map(({ scraped_text: _t, ...rest }) => rest),
+    cache_hits: cacheHits,
+    companies: all.map(({ scraped_text: _t, from_cache: _c, ...rest }) => rest),
     _texts: all,
   }
 }
 
+// Test cap: only first N companies hit Claude; the rest are auto-rejected to keep cost predictable.
+// With CLASSIFY_CONCURRENCY=5 batches of 10, we process up to 50 companies in ~one Claude round-trip.
+const CLASSIFY_TEST_LIMIT = 50
+const CLASSIFY_BATCH_SIZE = 10
+const CLASSIFY_CONCURRENCY = 5
+
+async function claudeWithRetry(system: string, user: string, maxAttempts = 4): Promise<string> {
+  let attempt = 0
+  while (true) {
+    try { return await claude(system, user) }
+    catch (e) {
+      attempt++
+      const msg = e instanceof Error ? e.message : String(e)
+      const isRateLimited = /429|rate.?limit|overloaded|529/i.test(msg)
+      if (!isRateLimited || attempt >= maxAttempts) throw e
+      const wait = 1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250)
+      console.warn(`[runClassify] rate-limited (attempt ${attempt}/${maxAttempts}), retrying in ${wait}ms`)
+      await new Promise(r => setTimeout(r, wait))
+    }
+  }
+}
+
+async function pMap<T, R>(items: T[], concurrency: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = cursor++
+      if (i >= items.length) return
+      results[i] = await fn(items[i], i)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 async function runClassify(
   scrapeResults: Array<ApolloCompany & { scraped_text?: string; scraped_ok?: boolean }>,
-  _icp: unknown,
-  _offerText: string,
+  icp: unknown,
+  offerText: string,
 ) {
-  // TEMP: skip classification — pass all companies through as targets
-  const results = scrapeResults.map(c => ({
-    domain: c.domain, name: c.name,
-    is_target: true, confidence: 100,
-    segment: 'UNCLASSIFIED', reasoning: 'Classification skipped',
-    logo_url: c.logo_url,
-  }))
+  const toClassify = scrapeResults.slice(0, CLASSIFY_TEST_LIMIT)
+  const autoRejected = scrapeResults.slice(CLASSIFY_TEST_LIMIT)
+
+  const results: Array<{
+    domain: string; name: string;
+    is_target: boolean; confidence: number;
+    segment: string; reasoning: string;
+    logo_url: string | null
+  }> = []
+
+  if (toClassify.length > 0) {
+    const skill = await fetchSkill('company-qualification')
+
+    const batches: typeof toClassify[] = []
+    for (let i = 0; i < toClassify.length; i += CLASSIFY_BATCH_SIZE) {
+      batches.push(toClassify.slice(i, i + CLASSIFY_BATCH_SIZE))
+    }
+
+    const batchOutputs = await pMap(batches, CLASSIFY_CONCURRENCY, async (batch) => {
+      const payload = batch.map(c => ({
+        domain: c.domain,
+        name: c.name,
+        description: c.description ?? '',
+        scraped: (c.scraped_text ?? '').slice(0, 1500),
+      }))
+      const prompt = `Offer: ${offerText}
+ICP: ${JSON.stringify(icp ?? {})}
+
+Classify each company as is_target=true (matches ICP) or false. Return ONLY a JSON array:
+[{"domain":"...","is_target":bool,"confidence":0-100,"segment":"LABEL","reasoning":"..."}]
+
+Companies:
+${JSON.stringify(payload, null, 2)}`
+
+      try {
+        const raw = await claudeWithRetry(skill, prompt)
+        const parsed = JSON.parse(raw) as Array<{ domain: string; is_target: boolean; confidence: number; segment: string; reasoning: string }>
+        return { batch, parsed, error: null as string | null }
+      } catch (e) {
+        return { batch, parsed: [] as Array<{ domain: string; is_target: boolean; confidence: number; segment: string; reasoning: string }>, error: e instanceof Error ? e.message : String(e) }
+      }
+    })
+
+    for (const { batch, parsed, error } of batchOutputs) {
+      const byDomain = Object.fromEntries(parsed.map(r => [r.domain, r]))
+      for (const c of batch) {
+        const r = byDomain[c.domain]
+        if (r) {
+          results.push({
+            domain: c.domain, name: c.name,
+            is_target: r.is_target, confidence: r.confidence,
+            segment: r.segment, reasoning: r.reasoning,
+            logo_url: c.logo_url,
+          })
+        } else {
+          results.push({
+            domain: c.domain, name: c.name,
+            is_target: false, confidence: 0,
+            segment: 'CLASSIFY_FAILED',
+            reasoning: error ? `Claude call failed: ${error}` : 'No verdict returned for this domain',
+            logo_url: c.logo_url,
+          })
+        }
+      }
+    }
+  }
+
+  for (const c of autoRejected) {
+    results.push({
+      domain: c.domain, name: c.name,
+      is_target: false, confidence: 0,
+      segment: 'AUTO_REJECTED',
+      reasoning: `Skipped — only first ${CLASSIFY_TEST_LIMIT} companies are classified in test mode`,
+      logo_url: c.logo_url,
+    })
+  }
+
   return {
     total: scrapeResults.length,
-    pre_filtered: 0,
-    candidates: scrapeResults.length,
-    targets: results.length,
+    pre_filtered: autoRejected.length,
+    candidates: toClassify.length,
+    targets: results.filter(r => r.is_target).length,
     results,
   }
 }
@@ -275,8 +387,13 @@ async function runExtractPeople(
 ) {
   const key = process.env.APOLLO_API_KEY!
   const icpData = icp as Record<string, unknown>
+  // Prefer flat icp.titles (what IcpEditor saves); fall back to target_roles structure
+  const flatTitles = icpData.titles as string[] | undefined
   const roles = icpData.target_roles as Record<string, string[]> | undefined
-  const titles = [...(roles?.primary ?? []), ...(roles?.secondary ?? [])].slice(0, 5)
+  const titles = (flatTitles?.length ? flatTitles : [...(roles?.primary ?? []), ...(roles?.secondary ?? [])]).slice(0, 5)
+  if (titles.length === 0) {
+    throw new Error('ICP has no target titles — set "Target roles" in the IcpEditor before extracting people')
+  }
 
   const domainLimit = scout ? 3 : 25
   const domainsSlice = targetDomains.slice(domainOffset, domainOffset + domainLimit)
@@ -307,19 +424,9 @@ async function runExtractPeople(
       }
 
       const data = await res.json()
-      let people = (data.people ?? []) as Record<string, unknown>[]
-
-      // Fallback: retry without title filter if no results
-      if (people.length === 0 && titles.length > 0) {
-        const fallbackParams = new URLSearchParams()
-        fallbackParams.set('q_organization_domains_list[]', domain)
-        fallbackParams.set('page', '1')
-        fallbackParams.set('per_page', '5')
-        people = await fetch(`${APOLLO_BASE}/mixed_people/api_search?${fallbackParams}`, {
-          method: 'POST',
-          headers: { 'x-api-key': key },
-        }).then(r => r.ok ? r.json().then((d: Record<string, unknown>) => (d.people ?? []) as Record<string, unknown>[]) : []).catch(() => [])
-      }
+      const people = (data.people ?? []) as Record<string, unknown>[]
+      // No fallback: if no person matches the ICP titles, skip the company.
+      // Returning a random employee defeats targeting.
 
       for (const p of people) {
         if (p.id) candidates.push({ id: p.id as string, domain })
@@ -379,7 +486,7 @@ async function runExtractPeople(
 
 // ─── Route ────────────────────────────────────────────────────────────────────
 
-const STEP_ORDER = ['extract_icp', 'generate_filters', 'apollo_search', 'scrape', 'classify', 'extract_people'] as const
+const STEP_ORDER = ['generate_filters', 'apollo_search', 'scrape', 'classify', 'extract_people'] as const
 type StepName = typeof STEP_ORDER[number]
 
 export async function POST(req: Request) {
@@ -418,22 +525,20 @@ export async function POST(req: Request) {
     let artifact: unknown
     const offerText = (project.offer_text as string | null) ?? (project.clients as Record<string, string> | null)?.website_url ?? project.name as string
 
+    // ICP comes from project.icp_json (managed by IcpEditor), not from a pipeline step
+    const projectIcp = (project.icp_json as Record<string, unknown> | null) ?? {}
+
     switch (step) {
-      case 'extract_icp':
-        artifact = await runExtractIcp(project as Record<string, unknown>)
-        break
       case 'generate_filters': {
-        const icp = getArtifact('extract_icp')
-        if (!icp) throw new Error('Run extract_icp first')
-        artifact = await runGenerateFilters(icp)
+        if (!projectIcp || Object.keys(projectIcp).length === 0) throw new Error('ICP is empty — fill it in the ICP editor first')
+        artifact = await runGenerateFilters(projectIcp)
         break
       }
       case 'apollo_search': {
         const filters = getArtifact('generate_filters') as Record<string, unknown>
-        const icp = getArtifact('extract_icp') as Record<string, unknown> ?? {}
         if (!filters) throw new Error('Run generate_filters first')
         const overrideKeywords = (project.run_config_json as { keywords?: string[] } | null)?.keywords
-        artifact = await runApolloSearch(filters, icp, page, seenDomains, overrideKeywords)
+        artifact = await runApolloSearch(filters, projectIcp, page, seenDomains, overrideKeywords)
         break
       }
       case 'scrape': {
@@ -444,21 +549,19 @@ export async function POST(req: Request) {
       }
       case 'classify': {
         const scrapeResult = getArtifact('scrape') as { _texts?: Array<ApolloCompany & { scraped_text?: string; scraped_ok?: boolean }> }
-        const icp = getArtifact('extract_icp')
         if (!scrapeResult) throw new Error('Run scrape first')
         const texts = scrapeResult._texts ?? []
-        artifact = await runClassify(texts, icp, offerText)
+        artifact = await runClassify(texts, projectIcp, offerText)
         break
       }
       case 'extract_people': {
         const classifyResult = getArtifact('classify') as { results: Array<{ domain: string; is_target: boolean }> }
-        const icp = getArtifact('extract_icp')
-        if (!classifyResult) throw new Error('Run classify first')
+        if (!classifyResult && !domainsOverride?.length) throw new Error('Run classify first or pass domainsOverride')
         const targetDomains = domainsOverride?.length
           ? domainsOverride
           : classifyResult.results.filter(r => r.is_target).map(r => r.domain)
         const offset = domainsOverride?.length ? 0 : domainOffset
-        artifact = await runExtractPeople(targetDomains, icp, false, offset)
+        artifact = await runExtractPeople(targetDomains, projectIcp, false, offset)
         break
       }
       default:
@@ -499,21 +602,39 @@ export async function POST(req: Request) {
     if (step === 'classify') {
       const result = artifact as { results: Array<{ domain: string; name: string; is_target: boolean; confidence: number; segment: string; reasoning: string; logo_url?: string | null }> }
       if (result.results.length > 0) {
+        // 1. Upsert metadata into global companies (idempotent on domain)
+        const now = new Date().toISOString()
         await supabase.from('companies').upsert(
           result.results.map(r => ({
-            project_id: projectId,
-            pipeline_run_id: runId,
             domain: r.domain,
             name: r.name,
-            scraped_text: '',
-            is_target: r.is_target,
-            confidence: r.confidence,
-            segment: r.segment,
-            reasoning: r.reasoning,
-            qualification_status: r.is_target ? 'qualified' : 'rejected',
             logo_url: r.logo_url ?? null,
+            updated_at: now,
           })),
-          { onConflict: 'project_id,domain' },
+          { onConflict: 'domain' },
+        )
+        // 2. Resolve domain → company_id
+        const { data: rows } = await supabase
+          .from('companies')
+          .select('id, domain')
+          .in('domain', result.results.map(r => r.domain))
+        const domainToId = Object.fromEntries((rows ?? []).map((r: { id: string; domain: string }) => [r.domain, r.id]))
+        // 3. Upsert per-project qualification
+        await supabase.from('project_companies').upsert(
+          result.results
+            .filter(r => domainToId[r.domain])
+            .map(r => ({
+              project_id: projectId,
+              company_id: domainToId[r.domain],
+              pipeline_run_id: runId,
+              qualification_status: r.is_target ? 'qualified' : 'rejected',
+              is_target: r.is_target,
+              confidence: r.confidence,
+              segment: r.segment,
+              reasoning: r.reasoning,
+              source: 'pipeline',
+            })),
+          { onConflict: 'project_id,company_id' },
         )
       }
     }
@@ -523,8 +644,18 @@ export async function POST(req: Request) {
       const result = artifact as { contacts: Array<{ name: string; email?: unknown; title?: unknown; domain: string; linkedin_url?: unknown }> }
       if (result.contacts.length > 0) {
         const domains = [...new Set(result.contacts.map(c => c.domain))]
-        const { data: dbCompanies } = await supabase.from('companies').select('id, domain').eq('project_id', projectId).in('domain', domains)
+        // Global companies lookup (no project_id filter — companies are shared)
+        const { data: dbCompanies } = await supabase.from('companies').select('id, domain').in('domain', domains)
         const domainToId = Object.fromEntries((dbCompanies ?? []).map((c: { id: string; domain: string }) => [c.domain, c.id]))
+        // Auto-attach to project via project_companies (covers CSV-upload flow that skips classify)
+        const attachRows = Object.values(domainToId).map(company_id => ({
+          project_id: projectId,
+          company_id,
+          source: 'pipeline',
+        }))
+        if (attachRows.length > 0) {
+          await supabase.from('project_companies').upsert(attachRows, { onConflict: 'project_id,company_id', ignoreDuplicates: true })
+        }
 
         // Deduplicate within batch by linkedin_url then by email
         const seenLinkedin = new Set<string>()

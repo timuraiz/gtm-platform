@@ -2,61 +2,6 @@
 
 import { useState } from 'react'
 
-// ─── ICP ──────────────────────────────────────────────────────────────────────
-
-export function IcpArtifact({ artifact }: { artifact: unknown }) {
-  const icp = artifact as Record<string, unknown>
-  const roles = icp.target_roles as Record<string, string[]> | undefined
-  const filters = icp.apollo_filters as Record<string, unknown> | undefined
-  const segments = icp.segments as Array<{ name: string; keywords: string[] }> | undefined
-
-  return (
-    <div className="space-y-4">
-      {typeof icp.primary_offer === 'string' && (
-        <div>
-          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-1">Offer</p>
-          <p className="text-sm text-zinc-800">{icp.primary_offer}</p>
-        </div>
-      )}
-      {roles && (
-        <div>
-          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-2">Target Roles</p>
-          <div className="flex flex-wrap gap-1">
-            {[...(roles.primary ?? []), ...(roles.secondary ?? [])].map(r => (
-              <span key={r} className="rounded-full bg-purple-50 text-purple-700 px-2 py-0.5 text-xs">{r}</span>
-            ))}
-          </div>
-        </div>
-      )}
-      {Array.isArray(filters?.locations) && (filters.locations as string[]).length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-2">Geo</p>
-          <div className="flex flex-wrap gap-1">
-            {(filters.locations as string[]).map(l => (
-              <span key={l} className="rounded-full bg-green-50 text-green-700 px-2 py-0.5 text-xs">{l}</span>
-            ))}
-          </div>
-        </div>
-      )}
-      {segments && segments.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-2">Segments</p>
-          {segments.map(seg => (
-            <div key={seg.name} className="mb-2">
-              <span className="text-xs font-semibold text-blue-700 uppercase">{seg.name}</span>
-              <div className="flex flex-wrap gap-1 mt-1">
-                {seg.keywords.map(k => (
-                  <span key={k} className="rounded bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[11px]">{k}</span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Filters ──────────────────────────────────────────────────────────────────
 
 export function FiltersArtifact({ artifact }: { artifact: unknown }) {
@@ -278,7 +223,6 @@ export function PeopleArtifact({ artifact }: { artifact: unknown }) {
 
 export function renderArtifact(name: string, artifact: unknown) {
   switch (name) {
-    case 'extract_icp':      return <IcpArtifact artifact={artifact} />
     case 'generate_filters': return <FiltersArtifact artifact={artifact} />
     case 'apollo_search':    return <ApolloArtifact artifact={artifact} />
     case 'scrape':           return <ScrapeArtifact artifact={artifact} />

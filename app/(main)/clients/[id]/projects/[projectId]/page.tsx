@@ -1,12 +1,14 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getProject, getPipelineRuns, getContacts, getIterationCustomColumns } from '@/app/actions/pipeline'
+import { getProjectCompanies } from '@/app/actions/companies'
 import { getSequences, getProjectCaseStudies, getProjectShareToken } from '@/app/actions/sequences'
 import { getIterations } from '@/app/actions/iterations'
 import { ProjectPipelineView } from '@/components/project-pipeline-view'
 import { ClientLogo } from '@/components/client-logo'
 import { IcpEditor } from '@/components/icp-editor'
 import { ContactsTable } from '@/components/contacts-table'
+import { CompaniesTable } from '@/components/companies-table'
 import { SequenceBuilder } from '@/components/sequence-builder'
 import { ProjectShareButton } from '@/components/project-share-button'
 import { IterationSelector, FirstIterationPrompt } from '@/components/iteration-selector'
@@ -25,7 +27,7 @@ export default async function ProjectPage({
   const iterations = await getIterations(projectId)
   const activeIteration = iterations.find(i => i.id === iter) ?? iterations[0] ?? null
 
-  const [project, runs, contacts, sequences, caseStudies, shareToken, customColumns] = await Promise.all([
+  const [project, runs, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies] = await Promise.all([
     getProject(projectId),
     getPipelineRuns(projectId),
     activeIteration ? getContacts(projectId, activeIteration.id) : Promise.resolve([]),
@@ -33,6 +35,7 @@ export default async function ProjectPage({
     getProjectCaseStudies(projectId),
     getProjectShareToken(projectId),
     activeIteration ? getIterationCustomColumns(projectId, activeIteration.id) : Promise.resolve([] as string[]),
+    getProjectCompanies(projectId),
   ])
 
   if (!project) redirect(`/clients/${clientId}`)
@@ -82,6 +85,7 @@ export default async function ProjectPage({
           <div className="border-b border-zinc-100 mb-6 flex gap-1">
             {([
               { key: 'pipeline', label: 'Pipeline' },
+              { key: 'companies', label: `Companies${projectCompanies.length ? ` (${projectCompanies.length})` : ''}` },
               { key: 'contacts', label: `Contacts${contacts.length ? ` (${contacts.length})` : ''}` },
               { key: 'sequences', label: `Sequences${sequences.length ? ` (${sequences.length})` : ''}` },
               { key: 'stats', label: 'Stats' },
@@ -101,7 +105,9 @@ export default async function ProjectPage({
             ))}
           </div>
 
-          {tab === 'contacts' ? (
+          {tab === 'companies' ? (
+            <CompaniesTable companies={projectCompanies} projectId={projectId} iterationId={activeIteration.id} />
+          ) : tab === 'contacts' ? (
             <ContactsTable contacts={contacts} projectId={projectId} iterationId={activeIteration.id} />
           ) : tab === 'sequences' ? (
             <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} iterationId={activeIteration.id} iterationChannel={activeIteration.channel} customColumns={customColumns} />

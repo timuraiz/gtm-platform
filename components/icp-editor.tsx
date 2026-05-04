@@ -156,6 +156,17 @@ function readTitles(icp: IcpRaw): string[] {
   return []
 }
 
+function readKeywords(icp: IcpRaw): string[] {
+  const segs = icp.segments as Array<{ keywords?: string[] }> | undefined
+  if (Array.isArray(segs)) return [...new Set(segs.flatMap(s => s.keywords ?? []))]
+  return []
+}
+
+// Apollo expects employee_ranges as "min,max" (e.g. "1,10"). Normalize legacy "1-10" form.
+function normalizeEmployeeRanges(values: string[]): string[] {
+  return values.map(v => v.includes(',') ? v : v.replace(/-/g, ','))
+}
+
 // ─── Main editor ──────────────────────────────────────────────────────────────
 
 export function IcpEditor({
@@ -176,8 +187,10 @@ export function IcpEditor({
   const [geo, setGeo] = useState<string[]>(readGeo(raw))
   const [industries, setIndustries] = useState<string[]>(readIndustries(raw))
   const [titles, setTitles] = useState<string[]>(readTitles(raw))
+  const [keywords, setKeywords] = useState<string[]>(readKeywords(raw))
+  const [exclusions, setExclusions] = useState<string[]>((raw.exclusions as string[]) ?? [])
   const [fundingRounds, setFundingRounds] = useState<string[]>((raw.funding_rounds as string[]) ?? [])
-  const [employeeRanges, setEmployeeRanges] = useState<string[]>((raw.employee_ranges as string[]) ?? [])
+  const [employeeRanges, setEmployeeRanges] = useState<string[]>(normalizeEmployeeRanges((raw.employee_ranges as string[]) ?? []))
   const [trigger, setTrigger] = useState<string>((raw.trigger as string) ?? '')
   const [targetContacts, setTargetContacts] = useState<number>((raw.target_contacts as number) ?? 100)
   const [maxCredits, setMaxCredits] = useState<number>((raw.max_credits as number) ?? 200)
@@ -187,8 +200,10 @@ export function IcpEditor({
     setGeo(readGeo(raw))
     setIndustries(readIndustries(raw))
     setTitles(readTitles(raw))
+    setKeywords(readKeywords(raw))
+    setExclusions((raw.exclusions as string[]) ?? [])
     setFundingRounds((raw.funding_rounds as string[]) ?? [])
-    setEmployeeRanges((raw.employee_ranges as string[]) ?? [])
+    setEmployeeRanges(normalizeEmployeeRanges((raw.employee_ranges as string[]) ?? []))
     setTrigger((raw.trigger as string) ?? '')
     setTargetContacts((raw.target_contacts as number) ?? 100)
     setMaxCredits((raw.max_credits as number) ?? 200)
@@ -213,6 +228,8 @@ export function IcpEditor({
           primary: titles.slice(0, 3),
           secondary: titles.slice(3),
         },
+        segments: keywords.length > 0 ? [{ name: 'main', keywords }] : [],
+        exclusions,
         apollo_filters: {
           ...(raw.apollo_filters as object ?? {}),
           locations: geo,
@@ -227,7 +244,7 @@ export function IcpEditor({
     }
   }
 
-  const hasContent = geo.length || industries.length || titles.length || fundingRounds.length || trigger
+  const hasContent = geo.length || industries.length || titles.length || keywords.length || fundingRounds.length || trigger
 
   return (
     <div className="rounded-2xl border border-zinc-100 bg-white overflow-hidden">
@@ -291,6 +308,14 @@ export function IcpEditor({
             <TagInput label="Geography" values={geo} onChange={setGeo} placeholder="United States" color="green" />
             <TagInput label="Industries" values={industries} onChange={setIndustries} placeholder="B2B SaaS" color="blue" />
             <TagInput label="Target roles" values={titles} onChange={setTitles} placeholder="CEO, Founder, CMO…" color="purple" />
+            <div>
+              <TagInput label="Apollo keywords" values={keywords} onChange={setKeywords} placeholder="fintech app, developer tools" color="orange" />
+              <p className="text-[10px] text-zinc-400 mt-1">Search phrases used by Apollo. Pick product/industry words ("fintech app", "B2B SaaS"), avoid fundraising language.</p>
+            </div>
+            <div>
+              <TagInput label="Exclusions" values={exclusions} onChange={setExclusions} placeholder="VC funds, accelerators, branding studios" color="zinc" />
+              <p className="text-[10px] text-zinc-400 mt-1">Phrases the classifier uses to reject companies (e.g. "VC funds", "Branding studios", "Accelerators").</p>
+            </div>
 
             <PillSelector
               label="Funding rounds"
@@ -368,6 +393,22 @@ export function IcpEditor({
                 <p className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1.5">Industries</p>
                 <div className="flex flex-wrap gap-1">
                   {industries.map(i => <span key={i} className="rounded-full bg-blue-50 text-blue-700 px-2.5 py-0.5 text-xs">{i}</span>)}
+                </div>
+              </div>
+            )}
+            {keywords.length > 0 && (
+              <div>
+                <p className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1.5">Apollo keywords</p>
+                <div className="flex flex-wrap gap-1">
+                  {keywords.map(k => <span key={k} className="rounded-full bg-orange-50 text-orange-700 px-2.5 py-0.5 text-xs">{k}</span>)}
+                </div>
+              </div>
+            )}
+            {exclusions.length > 0 && (
+              <div>
+                <p className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1.5">Exclusions</p>
+                <div className="flex flex-wrap gap-1">
+                  {exclusions.map(e => <span key={e} className="rounded-full bg-zinc-100 text-zinc-600 px-2.5 py-0.5 text-xs">{e}</span>)}
                 </div>
               </div>
             )}

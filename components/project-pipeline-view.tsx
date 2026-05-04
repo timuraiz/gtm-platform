@@ -13,7 +13,6 @@ import { fadeUp, staggerContainer, springGentle } from '@/lib/animations'
 
 type StepMeta = { label: string; sub: string; Icon: React.FC<{ size?: number; className?: string }> }
 const STEP_META: Record<string, StepMeta> = {
-  extract_icp:      { label: 'Extract ICP',        sub: 'Claude reads your offer',  Icon: Sparkles },
   generate_filters: { label: 'Generate Filters',   sub: 'Apollo search parameters', Icon: SlidersHorizontal },
   apollo_search:    { label: 'Apollo Search',      sub: 'Company discovery',        Icon: Radar },
   scrape:           { label: 'Scrape Websites',    sub: 'Enrich with website text', Icon: Globe },
@@ -24,11 +23,6 @@ const STEP_META: Record<string, StepMeta> = {
 function stepSummary(name: string, artifact: unknown): string {
   const a = artifact as Record<string, unknown>
   switch (name) {
-    case 'extract_icp': {
-      const roles = a.target_roles as Record<string, string[]> | undefined
-      const count = [...(roles?.primary ?? []), ...(roles?.secondary ?? [])].length
-      return `${count} roles · ${(a.segments as unknown[] ?? []).length} segments`
-    }
     case 'generate_filters': return `${(a.keywords as string[] ?? []).length} keywords`
     case 'apollo_search':    return `${a.companies_found ?? 0} companies found`
     case 'scrape':           return `${a.ok ?? 0} scraped · ${(a.total as number ?? 0) - (a.scraped as number ?? 0)} Apollo-only`
@@ -198,6 +192,7 @@ export function ProjectPipelineView({ projectId, iterationId, initialRuns, icp }
             projectId={projectId}
             iterationId={iterationId}
             icp={icp}
+            latestRunId={runs.find(r => r.status === 'running' || r.status === 'done')?.id ?? null}
             onRunCreated={onRunStarted}
             onDone={refreshRuns}
           />

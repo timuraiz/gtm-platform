@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Search, Download, Mail, Trash2, ExternalLink, ChevronLeft, ChevronRight, Upload } from 'lucide-react'
 import { type Contact, deleteContact, deleteContacts } from '@/app/actions/pipeline'
 import { UploadContactsModal } from './upload-contacts-modal'
@@ -41,6 +42,7 @@ export function ContactsTable({
   projectId?: string
   iterationId?: string
 }) {
+  const router = useRouter()
   const [contacts, setContacts] = useState<Contact[]>(initialContacts)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<FilterKey>('all')
@@ -98,18 +100,19 @@ export function ContactsTable({
       await deleteContact(id)
       setContacts(prev => prev.filter(c => c.id !== id))
       setSelected(prev => { const next = new Set(prev); next.delete(id); return next })
+      router.refresh()
     } finally { setDeleting(false) }
   }
 
   async function handleBulkDelete() {
     if (selected.size === 0) return
-    if (!confirm(`Delete ${selected.size} contact${selected.size === 1 ? '' : 's'}?`)) return
     setDeleting(true)
     try {
       const ids = Array.from(selected)
       await deleteContacts(ids)
       setContacts(prev => prev.filter(c => !selected.has(c.id)))
       setSelected(new Set())
+      router.refresh()
     } finally { setDeleting(false) }
   }
 

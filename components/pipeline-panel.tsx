@@ -9,12 +9,16 @@ import { renderArtifact } from './pipeline-artifacts'
 import { getRun } from '@/app/actions/pipeline'
 
 const STEPS = [
-  { id: 'extract_icp',      label: 'Extract ICP',        sub: 'Claude reads your offer',   Icon: Sparkles },
-  { id: 'generate_filters', label: 'Generate Filters',   sub: 'Apollo search parameters',  Icon: SlidersHorizontal },
-  { id: 'apollo_search',    label: 'Apollo Search',      sub: 'Company discovery',         Icon: Radar },
-  { id: 'scrape',           label: 'Scrape Websites',    sub: 'Enrich with website text',  Icon: Globe },
-  { id: 'classify',         label: 'Classify Companies', sub: 'Qualify / reject',          Icon: ListChecks },
-  { id: 'extract_people',   label: 'Extract People',     sub: 'Decision makers',           Icon: Users },
+  { id: 'generate_filters', label: 'Generate Filters',   sub: 'Apollo search parameters',  Icon: SlidersHorizontal, stage: 'companies' },
+  { id: 'apollo_search',    label: 'Apollo Search',      sub: 'Company discovery',         Icon: Radar,             stage: 'companies' },
+  { id: 'scrape',           label: 'Scrape Websites',    sub: 'Enrich with website text',  Icon: Globe,             stage: 'companies' },
+  { id: 'classify',         label: 'Classify Companies', sub: 'Qualify / reject',          Icon: ListChecks,        stage: 'companies' },
+  { id: 'extract_people',   label: 'Extract People',     sub: 'Decision makers',           Icon: Users,             stage: 'people' },
+] as const
+
+const STAGES = [
+  { id: 'companies', label: 'Find Companies', sub: 'Discover · scrape · qualify', Icon: Radar },
+  { id: 'people',    label: 'Extract People', sub: 'Enrich decision makers',      Icon: Users },
 ] as const
 
 type StepId = typeof STEPS[number]['id']
@@ -22,7 +26,6 @@ type StepId = typeof STEPS[number]['id']
 const ROUND_STEPS: StepId[] = ['apollo_search', 'scrape', 'classify', 'extract_people']
 
 const STEP_DURATION_EST: Record<StepId, number> = {
-  extract_icp:      15,
   generate_filters: 8,
   apollo_search:    20,
   scrape:           12,
@@ -58,11 +61,6 @@ function StepProgress({ startedAt, estimatedSeconds }: { startedAt: number; esti
 function stepSummary(id: StepId, artifact: unknown): string {
   const a = artifact as Record<string, unknown>
   switch (id) {
-    case 'extract_icp': {
-      const roles = a.target_roles as Record<string, string[]> | undefined
-      const count = [...(roles?.primary ?? []), ...(roles?.secondary ?? [])].length
-      return `${count} roles · ${(a.segments as unknown[] ?? []).length} segments`
-    }
     case 'generate_filters': return `${(a.keywords as string[] ?? []).length} keywords`
     case 'apollo_search':    return `${a.companies_found ?? 0} companies found`
     case 'scrape':           return `${a.ok ?? 0} scraped · ${(a.total as number ?? 0) - (a.scraped as number ?? 0)} Apollo-only`
@@ -229,9 +227,9 @@ function LoadMorePanel({
                 >
                   {running
                     ? <><span className="size-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Loading…</>
-                    : <><Users size={11} /> ~{batchCredits} people</>}
+                    : <><Users size={11} /> Load next {nextBatch.length}</>}
                 </button>
-                <span className="text-[11px] text-zinc-400">~{batchCredits} cr</span>
+                <span className="text-[11px] text-zinc-400 shrink-0">~{batchCredits} people · ~{batchCredits} cr</span>
               </div>
 
               <span className="text-zinc-200 text-xs">|</span>
@@ -343,11 +341,12 @@ function LoadMorePanel({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function PipelinePanel({
-  projectId, iterationId, icp, onRunCreated, onDone,
+  projectId, iterationId, icp, latestRunId, onRunCreated, onDone,
 }: {
   projectId: string
   iterationId: string
   icp?: Record<string, unknown> | null
+  latestRunId?: string | null
   onRunCreated?: (runId: string) => void
   onDone?: () => void
 }) {
@@ -366,9 +365,9 @@ export function PipelinePanel({
   const [loadMoreRunning, setLoadMoreRunning] = useState(false)
   const [lastLoadResult, setLastLoadResult] = useState<{ count: number; domains: number } | null>(null)
 
-  // Resume from URL
+  // Resume from URL or auto-pick the latest project run
   useEffect(() => {
-    const urlRunId = searchParams.get('runId')
+    const urlRunId = searchParams.get('runId') ?? latestRunId
     if (!urlRunId) return
     setLoading(true)
     getRun(urlRunId).then(run => {
@@ -583,99 +582,127 @@ export function PipelinePanel({
 
       {/* Steps */}
       {pipelineStarted && (
-        <div className="space-y-2">
-          {STEPS.map((step) => {
-            const state = states[step.id] ?? { status: 'idle' }
-            const isNext = step.id === nextStep
-            const isDone = state.status === 'done'
-            const isRunning = state.status === 'running'
-            const isError = state.status === 'error'
-            const isOpen = expanded.has(step.id)
-            const { Icon } = step
-            const estimatedSeconds = step.id === 'classify'
-              ? (() => {
-                  const total = (states['scrape']?.artifact as Record<string, unknown> | undefined)?.total as number ?? 100
-                  return Math.max(10, Math.ceil(Math.ceil(total * 0.35) / 10 / 3) * 6)
-                })()
-              : STEP_DURATION_EST[step.id]
-
+        <div className="space-y-5">
+          {STAGES.map(stage => {
+            const stageSteps = STEPS.filter(s => s.stage === stage.id)
+            const stageDone = stageSteps.every(s => states[s.id]?.status === 'done')
+            const stageRunning = stageSteps.some(s => states[s.id]?.status === 'running')
+            const StageIcon = stage.Icon
             return (
-              <div key={step.id} className={`rounded-xl border overflow-hidden transition-all ${
-                isDone    ? 'border-zinc-100 bg-white' :
-                isRunning ? 'border-blue-100 bg-blue-50' :
-                isError   ? 'border-red-100 bg-red-50' :
-                isNext    ? 'border-zinc-200 bg-white shadow-sm' :
-                            'border-zinc-100 bg-zinc-50/60'
-              }`}>
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <div className="w-5 flex justify-center shrink-0">
-                    {isRunning ? <span className="size-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin inline-block" />
-                    : isDone   ? <Check size={15} className="text-green-500" />
-                    : isError  ? <X size={15} className="text-red-400" />
-                    : <Icon size={15} className={isNext ? 'text-zinc-500' : 'text-zinc-300'} />}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium leading-none ${
-                      isDone    ? 'text-zinc-800' :
-                      isRunning ? 'text-blue-700' :
-                      isError   ? 'text-red-600' :
-                      isNext    ? 'text-zinc-800' : 'text-zinc-400'
-                    }`}>{step.label}</p>
-                    <p className="text-xs text-zinc-400 mt-0.5 truncate">
-                      {isDone && state.artifact ? stepSummary(step.id, state.artifact)
-                      : isError ? (state.error ?? 'Error')
-                      : step.sub}
-                    </p>
-                    {isRunning && startTimes[step.id] && (
-                      <StepProgress startedAt={startTimes[step.id]!} estimatedSeconds={estimatedSeconds} />
-                    )}
-                  </div>
-
-                  {isDone ? (
-                    <button onClick={() => toggleExpand(step.id)} className="text-zinc-300 hover:text-zinc-500 transition-colors p-1 shrink-0">
-                      <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                    </button>
-                  ) : isNext && !isRunning ? (
-                    <button
-                      onClick={() => runStep(step.id, { seenDomains })}
-                      className="flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 transition-colors shrink-0"
-                    >
-                      <Play size={11} />
-                      Run
-                    </button>
-                  ) : isError ? (
-                    <button onClick={() => runStep(step.id, { seenDomains })} className="text-xs text-red-500 hover:text-red-700 shrink-0">
-                      Retry
-                    </button>
-                  ) : null}
+              <div key={stage.id}>
+                <div className="flex items-center gap-2 mb-2 px-1">
+                  <StageIcon size={12} className={
+                    stageDone ? 'text-emerald-600' :
+                    stageRunning ? 'text-blue-500' :
+                    'text-zinc-400'
+                  } />
+                  <p className={`text-xs font-semibold uppercase tracking-wider ${
+                    stageDone ? 'text-emerald-700' :
+                    stageRunning ? 'text-blue-600' :
+                    'text-zinc-500'
+                  }`}>
+                    {stage.label}
+                  </p>
+                  <span className="text-[10px] text-zinc-400">· {stage.sub}</span>
+                  {stageDone && <Check size={11} className="text-emerald-500" />}
                 </div>
+                <div className="space-y-2">
+                  {stageSteps.map((step) => {
+                    const state = states[step.id] ?? { status: 'idle' }
+                    const isNext = step.id === nextStep
+                    const isDone = state.status === 'done'
+                    const isRunning = state.status === 'running'
+                    const isError = state.status === 'error'
+                    const isOpen = expanded.has(step.id)
+                    const { Icon } = step
+                    const estimatedSeconds = step.id === 'classify'
+                      ? (() => {
+                          const total = (states['scrape']?.artifact as Record<string, unknown> | undefined)?.total as number ?? 100
+                          return Math.max(10, Math.ceil(Math.ceil(total * 0.35) / 10 / 3) * 6)
+                        })()
+                      : STEP_DURATION_EST[step.id]
 
-                <AnimatePresence initial={false}>
-                  {isDone && isOpen && (
-                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-                      <div className="px-4 pb-4 pt-2 border-t border-zinc-100">
-                        {step.id === 'extract_people' && allDone && allCompanies.length > 0 ? (
-                          <LoadMorePanel
-                            inline
-                            allCompanies={allCompanies}
-                            prospectedDomains={prospectedDomains}
-                            totalContacts={totalContacts}
-                            running={loadMoreRunning}
-                            lastLoadResult={lastLoadResult}
-                            apolloKeywordHits={apolloKeywordHits}
-                            onLoadMore={handleLoadMore}
-                            onLoadUntilKpi={handleLoadUntilKpi}
-                            onNewRound={handleNewRound}
-                          />
-                        ) : (
-                          renderArtifact(step.id, state.artifact)
-                        )}
+                    return (
+                      <div key={step.id} className={`rounded-xl border overflow-hidden transition-all ${
+                        isDone    ? 'border-zinc-100 bg-white' :
+                        isRunning ? 'border-blue-100 bg-blue-50' :
+                        isError   ? 'border-red-100 bg-red-50' :
+                        isNext    ? 'border-zinc-200 bg-white shadow-sm' :
+                                    'border-zinc-100 bg-zinc-50/60'
+                      }`}>
+                        <div className="flex items-center gap-3 px-4 py-3">
+                          <div className="w-5 flex justify-center shrink-0">
+                            {isRunning ? <span className="size-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin inline-block" />
+                            : isDone   ? <Check size={15} className="text-green-500" />
+                            : isError  ? <X size={15} className="text-red-400" />
+                            : <Icon size={15} className={isNext ? 'text-zinc-500' : 'text-zinc-300'} />}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm font-medium leading-none ${
+                              isDone    ? 'text-zinc-800' :
+                              isRunning ? 'text-blue-700' :
+                              isError   ? 'text-red-600' :
+                              isNext    ? 'text-zinc-800' : 'text-zinc-400'
+                            }`}>{step.label}</p>
+                            <p className="text-xs text-zinc-400 mt-0.5 truncate">
+                              {isDone && state.artifact ? stepSummary(step.id, state.artifact)
+                              : isError ? (state.error ?? 'Error')
+                              : step.sub}
+                            </p>
+                            {isRunning && startTimes[step.id] && (
+                              <StepProgress startedAt={startTimes[step.id]!} estimatedSeconds={estimatedSeconds} />
+                            )}
+                          </div>
+
+                          {isDone ? (
+                            <button onClick={() => toggleExpand(step.id)} className="text-zinc-300 hover:text-zinc-500 transition-colors p-1 shrink-0">
+                              <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                          ) : isNext && !isRunning ? (
+                            <button
+                              onClick={() => runStep(step.id, { seenDomains })}
+                              className="flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 transition-colors shrink-0"
+                            >
+                              <Play size={11} />
+                              Run
+                            </button>
+                          ) : isError ? (
+                            <button onClick={() => runStep(step.id, { seenDomains })} className="text-xs text-red-500 hover:text-red-700 shrink-0">
+                              Retry
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <AnimatePresence initial={false}>
+                          {isDone && isOpen && (
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+                              <div className="px-4 pb-4 pt-2 border-t border-zinc-100">
+                                {step.id === 'extract_people' && allDone && allCompanies.length > 0 ? (
+                                  <LoadMorePanel
+                                    inline
+                                    allCompanies={allCompanies}
+                                    prospectedDomains={prospectedDomains}
+                                    totalContacts={totalContacts}
+                                    running={loadMoreRunning}
+                                    lastLoadResult={lastLoadResult}
+                                    apolloKeywordHits={apolloKeywordHits}
+                                    onLoadMore={handleLoadMore}
+                                    onLoadUntilKpi={handleLoadUntilKpi}
+                                    onNewRound={handleNewRound}
+                                  />
+                                ) : (
+                                  renderArtifact(step.id, state.artifact)
+                                )}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                    )
+                  })}
+                </div>
               </div>
             )
           })}
