@@ -27,11 +27,11 @@ export function SignInForm({ next }: { next: string }) {
   const router = useRouter()
   const [step, setStep] = useState<'email' | 'code'>('email')
   const [email, setEmail] = useState('')
-  const [code, setCode] = useState(['', '', '', '', '', ''])
+  const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
   const [resendCooldown, setResendCooldown] = useState(0)
-  const codeRefs = useRef<(HTMLInputElement | null)[]>([])
+  const codeInputRef = useRef<HTMLInputElement | null>(null)
 
   // Restore cooldown across page reloads / step navigation
   useEffect(() => {
@@ -45,7 +45,7 @@ export function SignInForm({ next }: { next: string }) {
   }, [])
 
   useEffect(() => {
-    if (step === 'code') setTimeout(() => codeRefs.current[0]?.focus(), 100)
+    if (step === 'code') setTimeout(() => codeInputRef.current?.focus(), 100)
   }, [step])
 
   useEffect(() => {
@@ -100,8 +100,8 @@ export function SignInForm({ next }: { next: string }) {
       })
       if (error) {
         setError('Invalid or expired code. Try again.')
-        setCode(['', '', '', '', '', ''])
-        codeRefs.current[0]?.focus()
+        setCode('')
+        codeInputRef.current?.focus()
         return
       }
       if (typeof window !== 'undefined') window.localStorage.removeItem(COOLDOWN_KEY)
@@ -110,30 +110,14 @@ export function SignInForm({ next }: { next: string }) {
     })
   }
 
-  function handleCodeChange(i: number, val: string) {
-    const sanitized = val.replace(/\D/g, '').slice(-1)
-    const newCode = [...code]
-    newCode[i] = sanitized
-    setCode(newCode)
-    if (sanitized && i < 5) codeRefs.current[i + 1]?.focus()
-    const full = newCode.join('')
-    if (full.length === 6) verifyOtp(full)
+  function handleCodeChange(val: string) {
+    const sanitized = val.replace(/\D/g, '').slice(0, 10)
+    setCode(sanitized)
   }
 
-  function handleCodeKeyDown(i: number, e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Backspace' && !code[i] && i > 0) codeRefs.current[i - 1]?.focus()
-    if (e.key === 'ArrowLeft' && i > 0) codeRefs.current[i - 1]?.focus()
-    if (e.key === 'ArrowRight' && i < 5) codeRefs.current[i + 1]?.focus()
-  }
-
-  function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
-    if (pasted.length === 6) {
-      e.preventDefault()
-      const arr = pasted.split('')
-      setCode(arr)
-      verifyOtp(pasted)
-    }
+  function handleCodeSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (code.length >= 6) verifyOtp(code)
   }
 
   return (
@@ -203,16 +187,18 @@ export function SignInForm({ next }: { next: string }) {
             </Link>
           </motion.form>
         ) : (
-          <motion.div
+          <motion.form
             key="code"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            onSubmit={handleCodeSubmit}
             className="space-y-5"
           >
             <button
-              onClick={() => { setStep('email'); setError(null); setCode(['', '', '', '', '', '']) }}
+              type="button"
+              onClick={() => { setStep('email'); setError(null); setCode('') }}
               className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-800 transition-colors"
             >
               <ArrowLeft size={12} />
@@ -226,21 +212,16 @@ export function SignInForm({ next }: { next: string }) {
               </p>
             </div>
 
-            <div className="flex justify-between gap-2" onPaste={handlePaste}>
-              {code.map((digit, i) => (
-                <input
-                  key={i}
-                  ref={el => { codeRefs.current[i] = el }}
-                  inputMode="numeric"
-                  maxLength={1}
-                  value={digit}
-                  onChange={e => handleCodeChange(i, e.target.value)}
-                  onKeyDown={e => handleCodeKeyDown(i, e)}
-                  disabled={pending}
-                  className="size-12 text-center text-lg font-semibold text-zinc-900 border border-zinc-200 rounded-lg focus:outline-none focus:border-zinc-900 disabled:opacity-50 transition-colors tabular-nums"
-                />
-              ))}
-            </div>
+            <input
+              ref={codeInputRef}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={code}
+              onChange={e => handleCodeChange(e.target.value)}
+              placeholder="••••••"
+              disabled={pending}
+              className="w-full text-center text-2xl font-semibold tracking-[0.4em] text-zinc-900 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 disabled:opacity-50 transition-colors tabular-nums py-3 placeholder:tracking-normal placeholder:text-zinc-300"
+            />
 
             {error && (
               <div className="flex items-start gap-2 rounded-lg bg-red-50 text-red-700 px-3 py-2 text-xs">
@@ -249,11 +230,21 @@ export function SignInForm({ next }: { next: string }) {
               </div>
             )}
 
+            <button
+              type="submit"
+              disabled={pending || code.length < 6}
+              className="w-full flex items-center justify-center gap-2 rounded-lg bg-zinc-900 text-white text-sm font-medium py-2.5 hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+            >
+              {pending && <Loader2 size={14} className="animate-spin" />}
+              Verify
+            </button>
+
             <div className="flex items-center justify-between text-xs">
               <span className="text-zinc-400">
                 {pending ? 'Verifying…' : 'Code expires in 60 minutes'}
               </span>
               <button
+                type="button"
                 onClick={() => sendOtp()}
                 disabled={resendCooldown > 0 || pending}
                 className="text-zinc-500 hover:text-zinc-800 disabled:text-zinc-300 transition-colors font-medium"
@@ -261,7 +252,7 @@ export function SignInForm({ next }: { next: string }) {
                 {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
               </button>
             </div>
-          </motion.div>
+          </motion.form>
         )}
       </AnimatePresence>
     </div>
