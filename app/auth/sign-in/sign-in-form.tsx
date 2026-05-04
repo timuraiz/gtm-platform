@@ -9,6 +9,7 @@ import { createClient } from '@/utils/supabase/client'
 
 const COOLDOWN_KEY = 'gtm_otp_cooldown'
 const COOLDOWN_MS = 60_000
+const ALLOWED_DOMAIN = 'leadsmore.agency'
 
 type StoredCooldown = { email: string; until: number }
 function readCooldown(): StoredCooldown | null {
@@ -59,6 +60,10 @@ export function SignInForm({ next }: { next: string }) {
     setError(null)
     const trimmed = email.trim()
     if (!trimmed.includes('@')) { setError('Enter a valid email'); return }
+    if (!trimmed.toLowerCase().endsWith('@' + ALLOWED_DOMAIN)) {
+      setError(`Access is restricted to @${ALLOWED_DOMAIN} emails. DM @timuraizatvafin on Telegram to request access.`)
+      return
+    }
 
     // If we already sent to this email recently, skip the API call — code is still valid
     const stored = readCooldown()

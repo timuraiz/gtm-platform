@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { Mail, AlertCircle, Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
+const ALLOWED_DOMAIN = 'leadsmore.agency'
+
 export function PasswordForm({ next }: { next: string }) {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -16,10 +18,15 @@ export function PasswordForm({ next }: { next: string }) {
   function submit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    const trimmed = email.trim()
+    if (!trimmed.toLowerCase().endsWith('@' + ALLOWED_DOMAIN)) {
+      setError(`Access is restricted to @${ALLOWED_DOMAIN} emails. DM @timuraizatvafin on Telegram to request access.`)
+      return
+    }
     startTransition(async () => {
       const supabase = createClient()
       const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: trimmed,
         password,
       })
       if (error) {
