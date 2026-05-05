@@ -112,6 +112,8 @@ function CopyStepButton({ step }: { step: SequenceStep }) {
 
 function PreviewContent({ text, contact, industry }: { text: string; contact: Contact; industry: string | null }) {
   const parts = text.split(/(\{[a-zA-Z_][a-zA-Z0-9_]*\})/g)
+  // Placeholder index counter for staggered fade-in (only resolved values get animated)
+  let placeholderIdx = 0
   return (
     <>
       {parts.map((part, i) => {
@@ -121,10 +123,20 @@ function PreviewContent({ text, contact, industry }: { text: string; contact: Co
         const resolved = resolvePlaceholder(name, contact, industry)
         const isBuiltin = BUILTIN_PLACEHOLDERS.has(name)
         const cls = isBuiltin ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700'
-        // Resolved → show real value with placeholder color (still readable as substitution)
+        // Resolved → show real value with placeholder color (fade-in, subtle stagger)
         if (resolved) {
+          const delay = Math.min(placeholderIdx++ * 0.025, 0.4)
           return (
-            <span key={i} className={`${cls} rounded px-1`} title={`{${name}}`}>{resolved}</span>
+            <motion.span
+              key={i}
+              className={`${cls} rounded px-1 inline-block`}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.22, delay, ease: [0.16, 1, 0.3, 1] }}
+              title={`{${name}}`}
+            >
+              {resolved}
+            </motion.span>
           )
         }
         // Unresolved → keep raw {name} mono so the gap is obvious
