@@ -61,14 +61,14 @@ export function ContactsTable({
   const counts = useMemo(() => ({
     all: contacts.length,
     email: contacts.filter(c => !!c.email).length,
-    linkedin: contacts.filter(c => !c.linkedin_url.startsWith('apollo-')).length,
+    linkedin: contacts.filter(c => !c.linkedin_url?.startsWith('apollo-')).length,
   }), [contacts])
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase()
     return contacts.filter(c => {
       if (filter === 'email' && !c.email) return false
-      if (filter === 'linkedin' && c.linkedin_url.startsWith('apollo-')) return false
+      if (filter === 'linkedin' && c.linkedin_url?.startsWith('apollo-')) return false
       if (q && ![c.first_name, c.last_name, c.title, c.email, c.company_name, c.company_domain].some(v => v?.toLowerCase().includes(q))) return false
       return true
     })
@@ -268,7 +268,7 @@ export function ContactsTable({
           <tbody>
             {visible.map((c, i) => {
               const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '—'
-              const isApolloId = c.linkedin_url.startsWith('apollo-')
+              const isApolloId = c.linkedin_url?.startsWith('apollo-')
               const isSelected = selected.has(c.id)
               return (
                 <tr

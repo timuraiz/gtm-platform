@@ -148,7 +148,7 @@ export type ClientStats = {
   top_roles: { linkedin: GroupRow[]; email: GroupRow[] }
 }
 
-export type GroupRow = { name: string; iterations: number; replies: number; meetings_booked: number }
+export type GroupRow = { name: string; iterations: number; leads_sent: number; replies: number; meetings_booked: number }
 
 export type SequenceStepLite = {
   type: 'connection_note' | 'message' | 'email'
@@ -219,13 +219,14 @@ export async function getClientStats(
     top_roles: { linkedin: [], email: [] },
   }
 
-  type GroupAccum = { iterations: number; replies: number; meetings_booked: number }
+  type GroupAccum = { iterations: number; leads_sent: number; replies: number; meetings_booked: number }
   const industryMap = { linkedin: new Map<string, GroupAccum>(), email: new Map<string, GroupAccum>() }
   const roleMap = { linkedin: new Map<string, GroupAccum>(), email: new Map<string, GroupAccum>() }
   const accumGroup = (map: Map<string, GroupAccum>, key: string, m: IterationMetrics | null) => {
     let acc = map.get(key)
-    if (!acc) { acc = { iterations: 0, replies: 0, meetings_booked: 0 }; map.set(key, acc) }
+    if (!acc) { acc = { iterations: 0, leads_sent: 0, replies: 0, meetings_booked: 0 }; map.set(key, acc) }
     acc.iterations += 1
+    acc.leads_sent += m?.leads_sent ?? 0
     acc.replies += m?.replies ?? 0
     acc.meetings_booked += m?.meetings_booked ?? 0
   }

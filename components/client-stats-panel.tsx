@@ -52,60 +52,63 @@ function Funnel({
   channel: 'linkedin' | 'email'
 }) {
   const top = totals[steps[0].key] as number
-  const accent =
-    channel === 'linkedin'
-      ? { bar: 'bg-blue-500', barSoft: 'bg-blue-100', text: 'text-blue-700', ring: 'ring-blue-100' }
-      : { bar: 'bg-orange-500', barSoft: 'bg-orange-100', text: 'text-orange-700', ring: 'ring-orange-100' }
-
   const noData = totals.iterations_with_stats === 0
 
   return (
-    <div className={`rounded-2xl border border-zinc-100 bg-white p-5 ring-1 ${accent.ring}`}>
-      <div className="flex items-center gap-2 mb-1">
-        <span className={accent.text}>
-          {channel === 'linkedin' ? <ChannelIcon channel="linkedin" size={14} /> : <Mail size={14} />}
+    <div className="rounded-2xl border border-zinc-100 bg-white overflow-hidden">
+      {/* Header */}
+      <div className="px-5 pt-4 pb-3 flex items-center justify-between border-b border-zinc-50">
+        <div className="flex items-center gap-2">
+          <span className="text-zinc-500">
+            {channel === 'linkedin' ? <ChannelIcon channel="linkedin" size={13} /> : <Mail size={13} />}
+          </span>
+          <span className="text-xs font-semibold text-zinc-700 uppercase tracking-widest">
+            {channel === 'linkedin' ? 'LinkedIn' : 'Email'}
+          </span>
+        </div>
+        <span className="text-[11px] text-zinc-400 tabular-nums">
+          {totals.iterations} iteration{totals.iterations === 1 ? '' : 's'}
         </span>
-        <p className={`text-xs uppercase tracking-widest font-semibold ${accent.text}`}>{channel === 'linkedin' ? 'LinkedIn' : 'Email'}</p>
       </div>
-      <p className="text-xs text-zinc-400">
-        {totals.iterations} iteration{totals.iterations === 1 ? '' : 's'}
-        {totals.iterations_with_stats < totals.iterations && ` · ${totals.iterations_with_stats} with stats`}
-      </p>
 
       {noData ? (
-        <div className="mt-6 flex flex-col items-center justify-center py-10 text-zinc-300">
+        <div className="flex flex-col items-center justify-center py-12 text-zinc-300">
           <BarChart3 size={20} />
           <p className="text-xs mt-2">No stats uploaded</p>
         </div>
       ) : (
-        <div className="mt-5 space-y-3">
+        <div className="divide-y divide-zinc-50">
           {steps.map((s, i) => {
             const value = totals[s.key] as number
-            const widthPct = top > 0 ? Math.max(2, (value / top) * 100) : 0
+            const widthPct = top > 0 ? Math.max(1, (value / top) * 100) : 0
             const prev = i > 0 ? (totals[steps[i - 1].key] as number) : null
+            const convRate = prev !== null ? pct(value, prev) : null
+            const isLast = i === steps.length - 1
             return (
-              <div key={s.key}>
-                <div className="flex items-baseline justify-between text-xs mb-1">
-                  <span className="text-zinc-500">{s.label}</span>
-                  <span className="flex items-baseline gap-2">
-                    {prev !== null && (
-                      <span className="text-[10px] text-zinc-300 tabular-nums">{pct(value, prev)}</span>
+              <div key={s.key} className="px-5 py-3.5">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-sm text-zinc-500">{s.label}</span>
+                    {convRate && convRate !== '—' && (
+                      <span className="text-[11px] text-zinc-300 tabular-nums">{convRate}</span>
                     )}
-                    <span className="text-sm font-semibold text-zinc-900 tabular-nums">{value}</span>
+                  </div>
+                  <span className={`text-base font-semibold tabular-nums leading-none ${isLast && value > 0 ? 'text-emerald-600' : value === 0 ? 'text-zinc-300' : 'text-zinc-900'}`}>
+                    {value.toLocaleString()}
                   </span>
                 </div>
-                <div className={`h-1.5 ${accent.barSoft} rounded-full overflow-hidden`}>
+                <div className="h-1 bg-zinc-100 rounded-full overflow-hidden">
                   <div
-                    className={`h-full ${accent.bar} rounded-full transition-all duration-500 ease-out`}
+                    className={`h-full rounded-full transition-all duration-700 ease-out ${isLast && value > 0 ? 'bg-emerald-400' : 'bg-zinc-800'}`}
                     style={{ width: `${widthPct}%` }}
                   />
                 </div>
               </div>
             )
           })}
-          <div className="pt-2 mt-2 border-t border-zinc-50 flex items-baseline justify-between text-[11px] text-zinc-400">
-            <span>Overall conversion to meeting</span>
-            <span className="tabular-nums font-medium text-zinc-700">
+          <div className="px-5 py-3 flex items-center justify-between">
+            <span className="text-[11px] text-zinc-400">Overall conversion to meeting</span>
+            <span className="text-[11px] tabular-nums font-semibold text-zinc-500">
               {pct(totals.meetings_booked, top)}
             </span>
           </div>
@@ -344,10 +347,10 @@ function TopGroupCard({
 }: {
   title: string
   subtitle: string
-  rows: Array<{ name: string; iterations: number; replies: number; meetings_booked: number }>
+  rows: Array<{ name: string; iterations: number; leads_sent: number; replies: number; meetings_booked: number }>
 }) {
   if (rows.length === 0) return null
-  const maxIter = Math.max(1, ...rows.map(r => r.iterations))
+  const maxReplies = Math.max(1, ...rows.map(r => r.replies))
   return (
     <div className="rounded-2xl border border-zinc-100 bg-white overflow-hidden">
       <div className="px-5 py-3.5 border-b border-zinc-50">
@@ -356,15 +359,21 @@ function TopGroupCard({
       </div>
       <div className="divide-y divide-zinc-50">
         {rows.map(r => {
-          const widthPct = (r.iterations / maxIter) * 100
+          const replyRate = r.leads_sent > 0 ? Math.round((r.replies / r.leads_sent) * 100) : null
+          const widthPct = (r.replies / maxReplies) * 100
           return (
             <div key={r.name} className="px-5 py-3">
               <div className="flex items-baseline justify-between gap-3 mb-1">
                 <span className="text-sm text-zinc-800 truncate">{r.name}</span>
                 <span className="flex items-baseline gap-3 text-xs shrink-0">
-                  <span className="text-zinc-400 tabular-nums">{r.iterations} iter</span>
+                  <span className="text-zinc-400 tabular-nums">{r.leads_sent} sent</span>
                   <span className={`tabular-nums ${r.replies === 0 ? 'text-zinc-300' : 'text-zinc-700'}`}>{r.replies} replies</span>
-                  <span className={`tabular-nums font-semibold ${r.meetings_booked === 0 ? 'text-zinc-300' : 'text-emerald-700'}`}>{r.meetings_booked}</span>
+                  {replyRate !== null && (
+                    <span className={`tabular-nums font-semibold ${replyRate === 0 ? 'text-zinc-300' : 'text-zinc-700'}`}>{replyRate}%</span>
+                  )}
+                  {r.meetings_booked > 0 && (
+                    <span className="tabular-nums font-semibold text-emerald-700">{r.meetings_booked} mtg</span>
+                  )}
                 </span>
               </div>
               <div className="h-1 bg-zinc-100 rounded-full overflow-hidden">
@@ -448,15 +457,14 @@ function ChannelReport({ stats }: { stats: ClientStats }) {
   )
 
   const sub = [
-    { key: 'linkedin' as const, label: 'LinkedIn', count: stats.linkedin.iterations, accent: 'text-blue-700', under: 'bg-blue-500' },
-    { key: 'email' as const, label: 'Email', count: stats.email.iterations, accent: 'text-orange-700', under: 'bg-orange-500' },
+    { key: 'linkedin' as const, label: 'LinkedIn', count: stats.linkedin.iterations },
+    { key: 'email' as const, label: 'Email', count: stats.email.iterations },
   ]
 
   const totals = stats[channel]
   const steps = channel === 'linkedin' ? LI_FUNNEL : EMAIL_FUNNEL
   const sequences = stats.top_sequences.filter(s => s.channel === channel)
   const industries = stats.top_industries[channel]
-  const roles = stats.top_roles[channel]
 
   return (
     <div className="space-y-4">
@@ -469,13 +477,13 @@ function ChannelReport({ stats }: { stats: ClientStats }) {
               key={t.key}
               onClick={() => setChannel(t.key)}
               className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-                active ? t.accent : 'text-zinc-400 hover:text-zinc-600'
+                active ? 'text-zinc-900' : 'text-zinc-400 hover:text-zinc-600'
               }`}
             >
               {t.key === 'linkedin' ? <ChannelIcon channel="linkedin" size={13} /> : <Mail size={13} />}
               {t.label}
               <span className={`text-[11px] tabular-nums ${active ? 'text-zinc-400' : 'text-zinc-300'}`}>{t.count}</span>
-              {active && <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${t.under}`} />}
+              {active && <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-zinc-900" />}
             </button>
           )
         })}
@@ -496,20 +504,13 @@ function ChannelReport({ stats }: { stats: ClientStats }) {
       {/* Top sequences — channel-filtered, full width with expandable rows */}
       <TopSequencesCard sequences={sequences} />
 
-      {/* Industries + roles for this channel */}
-      {(industries.length > 0 || roles.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <TopGroupCard
-            title="Top industries"
-            subtitle={`Iterations targeting each industry · ${channel === 'linkedin' ? 'LinkedIn' : 'Email'} only`}
-            rows={industries}
-          />
-          <TopGroupCard
-            title="Top ICP roles"
-            subtitle={`Iterations targeting each role · ${channel === 'linkedin' ? 'LinkedIn' : 'Email'} only`}
-            rows={roles}
-          />
-        </div>
+      {/* Industries for this channel */}
+      {industries.length > 0 && (
+        <TopGroupCard
+          title="Top industries"
+          subtitle={`Iterations targeting each industry · ${channel === 'linkedin' ? 'LinkedIn' : 'Email'} only`}
+          rows={industries}
+        />
       )}
 
       {/* By project — only this channel */}

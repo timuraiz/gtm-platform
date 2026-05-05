@@ -154,7 +154,7 @@ export function IterationStats({
           </div>
         </div>
         {showUpload && (
-          <UploadStatsModal iterationId={iterationId} onClose={() => setShowUpload(false)} />
+          <UploadStatsModal iterationId={iterationId} currentStats={null} onClose={() => setShowUpload(false)} />
         )}
       </>
     )
@@ -248,7 +248,7 @@ export function IterationStats({
       </div>
 
       {showUpload && (
-        <UploadStatsModal iterationId={iterationId} onClose={() => setShowUpload(false)} />
+        <UploadStatsModal iterationId={iterationId} currentStats={initialStats} onClose={() => setShowUpload(false)} />
       )}
     </div>
   )
@@ -260,8 +260,10 @@ function emptyMetrics(): IterationMetrics {
   }
 }
 
-function UploadStatsModal({ iterationId, onClose }: { iterationId: string; onClose: () => void }) {
+function UploadStatsModal({ iterationId, currentStats, onClose }: { iterationId: string; currentStats: IterationMetrics | null; onClose: () => void }) {
   const router = useRouter()
+  const hasExisting = currentStats && METRICS.some(m => currentStats[m.key] !== null)
+  const [mode, setMode] = useState<'replace' | 'append'>(hasExisting ? 'append' : 'replace')
   const [fileName, setFileName] = useState<string | null>(null)
   const [parsed, setParsed] = useState<{ headers: string[]; rows: ParsedRow[] } | null>(null)
   const [metrics, setMetrics] = useState<IterationMetrics>(emptyMetrics())
@@ -270,6 +272,17 @@ function UploadStatsModal({ iterationId, onClose }: { iterationId: string; onClo
   }))
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+
+  const finalMetrics: IterationMetrics = useMemo(() => {
+    if (mode === 'replace') return metrics
+    return Object.fromEntries(
+      METRICS.map(m => {
+        const existing = currentStats?.[m.key] ?? 0
+        const added = metrics[m.key] ?? 0
+        return [m.key, existing + added]
+      })
+    ) as IterationMetrics
+  }, [mode, metrics, currentStats])
 
   async function handleFile(file: File) {
     setError(null)
@@ -311,7 +324,7 @@ function UploadStatsModal({ iterationId, onClose }: { iterationId: string; onClo
     setSubmitting(true)
     setError(null)
     try {
-      await uploadIterationStats(iterationId, metrics)
+      await uploadIterationStats(iterationId, finalMetrics)
       router.refresh()
       onClose()
     } catch (e) {
@@ -343,9 +356,27 @@ function UploadStatsModal({ iterationId, onClose }: { iterationId: string; onClo
               <h2 className="text-base font-semibold text-zinc-900">Upload campaign stats</h2>
               <p className="text-xs text-zinc-400 mt-0.5">CSV will be parsed and mapped to system metrics</p>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-50">
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-2">
+              {hasExisting && (
+                <div className="flex items-center rounded-lg border border-zinc-200 overflow-hidden text-xs font-medium">
+                  <button
+                    onClick={() => setMode('append')}
+                    className={`px-3 py-1.5 transition-colors ${mode === 'append' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}
+                  >
+                    Append
+                  </button>
+                  <button
+                    onClick={() => setMode('replace')}
+                    className={`px-3 py-1.5 transition-colors ${mode === 'replace' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}
+                  >
+                    Replace
+                  </button>
+                </div>
+              )}
+              <button onClick={onClose} className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-50">
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
@@ -402,6 +433,9 @@ function UploadStatsModal({ iterationId, onClose }: { iterationId: string; onClo
                     {METRICS.map(m => {
                       const sug = suggestions[m.key]
                       const isAuto = sug && metrics[m.key] === sug.value
+                      const existing = currentStats?.[m.key] ?? null
+                      const added = metrics[m.key] ?? 0
+                      const total = (existing ?? 0) + added
                       return (
                         <div key={m.key} className="flex items-center gap-3 px-4 py-3">
                           <div className="flex-1 min-w-0">
@@ -415,6 +449,15 @@ function UploadStatsModal({ iterationId, onClose }: { iterationId: string; onClo
                               <p className="text-[11px] text-zinc-400 mt-0.5">No auto-match · enter manually</p>
                             )}
                           </div>
+                          {mode === 'append' && existing !== null && (
+                            <div className="flex items-baseline gap-1 text-xs text-zinc-400 tabular-nums shrink-0">
+                              <span>{existing}</span>
+                              <span>+</span>
+                              <span className="text-zinc-600">{added}</span>
+                              <span>=</span>
+                              <span className="font-semibold text-zinc-900">{total}</span>
+                            </div>
+                          )}
                           <input
                             type="number"
                             min={0}
