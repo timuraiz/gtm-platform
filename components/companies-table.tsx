@@ -9,7 +9,7 @@ import { CompanyAvatar } from './company-avatar'
 
 const PAGE_SIZE = 25
 
-type FilterKey = 'all' | 'qualified' | 'rejected' | 'csv' | 'pipeline'
+type FilterKey = 'all' | 'pending' | 'qualified' | 'rejected' | 'csv' | 'pipeline'
 
 export function CompaniesTable({
   companies: initial,
@@ -37,6 +37,7 @@ export function CompaniesTable({
 
   const counts = useMemo(() => ({
     all: companies.length,
+    pending: companies.filter(c => c.qualification_status === 'unknown').length,
     qualified: companies.filter(c => c.qualification_status === 'qualified').length,
     rejected: companies.filter(c => c.qualification_status === 'rejected').length,
     csv: companies.filter(c => c.source === 'csv').length,
@@ -46,6 +47,7 @@ export function CompaniesTable({
   const filtered = useMemo(() => {
     const q = query.toLowerCase()
     return companies.filter(c => {
+      if (filter === 'pending' && c.qualification_status !== 'unknown') return false
       if (filter === 'qualified' && c.qualification_status !== 'qualified') return false
       if (filter === 'rejected' && c.qualification_status !== 'rejected') return false
       if (filter === 'csv' && c.source !== 'csv') return false
@@ -166,6 +168,7 @@ export function CompaniesTable({
       <div className="flex items-center gap-1 flex-wrap">
         {([
           { key: 'all', label: 'All' },
+          { key: 'pending', label: 'Pending' },
           { key: 'qualified', label: 'Qualified' },
           { key: 'rejected', label: 'Rejected' },
           { key: 'csv', label: 'CSV' },

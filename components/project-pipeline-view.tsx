@@ -3,8 +3,8 @@
 import { useState, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, SlidersHorizontal, Radar, Globe, ListChecks, Users, Check, X, ChevronDown, GitFork } from 'lucide-react'
-import { type PipelineRun, type StepRecord, forkPipelineRun } from '@/app/actions/pipeline'
+import { Sparkles, SlidersHorizontal, Radar, Globe, ListChecks, Users, Check, X, ChevronDown } from 'lucide-react'
+import { type PipelineRun, type StepRecord } from '@/app/actions/pipeline'
 import { PipelinePanel } from './pipeline-panel'
 import { renderArtifact } from './pipeline-artifacts'
 import { fadeUp, staggerContainer, springGentle } from '@/lib/animations'
@@ -18,6 +18,11 @@ const STEP_META: Record<string, StepMeta> = {
   scrape:           { label: 'Scrape Websites',    sub: 'Enrich with website text', Icon: Globe },
   classify:         { label: 'Classify Companies', sub: 'Qualify / reject',         Icon: ListChecks },
   extract_people:   { label: 'Extract People',     sub: 'Decision makers',          Icon: Users },
+}
+const STEP_ORDER = ['generate_filters', 'apollo_search', 'scrape', 'classify', 'extract_people']
+const stepOrderIndex = (name: string) => {
+  const i = STEP_ORDER.indexOf(name)
+  return i === -1 ? STEP_ORDER.length : i
 }
 
 function stepSummary(name: string, artifact: unknown): string {
@@ -85,21 +90,15 @@ function StepCard({ step }: { step: StepRecord }) {
 
 // ─── Run card ─────────────────────────────────────────────────────────────────
 
-function RunCard({ run, onFork }: { run: PipelineRun; onFork: (runId: string) => void }) {
+function RunCard({ run }: { run: PipelineRun }) {
   const [open, setOpen] = useState(run.status === 'running')
-  const [forking, setForking] = useState(false)
   const date = new Date(run.created_at).toLocaleString('en', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
-  async function handleFork(e: React.MouseEvent) {
-    e.stopPropagation()
-    setForking(true)
-    try {
-      const newId = await forkPipelineRun(run.id)
-      onFork(newId)
-    } finally {
-      setForking(false)
-    }
-  }
+  // Derive counts straight from step artifacts so we don't depend on the legacy companies_found column
+  const apolloArtifact = run.steps.find(s => s.name === 'apollo_search')?.artifact as { companies_found?: number } | undefined
+  const classifyArtifact = run.steps.find(s => s.name === 'classify')?.artifact as { targets?: number } | undefined
+  const foundCount = apolloArtifact?.companies_found ?? 0
+  const qualifiedCount = classifyArtifact?.targets ?? 0
 
   return (
     <div className="rounded-2xl border border-zinc-100 bg-white overflow-hidden">
@@ -111,22 +110,10 @@ function RunCard({ run, onFork }: { run: PipelineRun; onFork: (runId: string) =>
             run.status === 'error' ? 'bg-red-400' : 'bg-zinc-300'
           }`} />
           <span className="flex-1 text-sm font-medium text-zinc-800">{date}</span>
-          {run.status === 'done' && (
-            <span className="text-xs text-zinc-400">{run.companies_found} companies · {run.contacts_found} contacts</span>
+          {run.status === 'done' && foundCount > 0 && (
+            <span className="text-xs text-zinc-400">{qualifiedCount} qualified · {foundCount} found</span>
           )}
         </button>
-        {run.status === 'done' && (
-          <button
-            onClick={handleFork}
-            disabled={forking}
-            title="Fork this run to continue or modify"
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors disabled:opacity-50"
-          >
-            {forking
-              ? <span className="size-3 rounded-full border-2 border-zinc-300 border-t-zinc-600 animate-spin" />
-              : <GitFork size={13} />}
-          </button>
-        )}
         <button onClick={() => setOpen(o => !o)} className="text-zinc-300 hover:text-zinc-500 transition-colors p-1">
           <ChevronDown size={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
@@ -144,8 +131,8 @@ function RunCard({ run, onFork }: { run: PipelineRun; onFork: (runId: string) =>
               {run.steps.length === 0 && run.status === 'running' && (
                 <p className="text-sm text-zinc-400">Pipeline is running…</p>
               )}
-              {run.steps.map((step, i) => (
-                <StepCard key={i} step={step} />
+              {[...run.steps].sort((a, b) => stepOrderIndex(a.name) - stepOrderIndex(b.name)).map((step, i) => (
+                <StepCard key={`${step.name}-${i}`} step={step} />
               ))}
             </div>
           </motion.div>
@@ -174,15 +161,6 @@ export function ProjectPipelineView({ projectId, iterationId, initialRuns, icp }
     router.refresh()
   }
 
-  async function handleFork(newRunId: string) {
-    await refreshRuns()
-    const params = new URLSearchParams(window.location.search)
-    params.set('runId', newRunId)
-    params.set('tab', 'pipeline')
-    router.push(`?${params.toString()}`)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
   return (
     <div className="space-y-6">
       {/* Launch panel */}
@@ -206,7 +184,7 @@ export function ProjectPipelineView({ projectId, iterationId, initialRuns, icp }
           <motion.div className="space-y-3" variants={staggerContainer} initial="hidden" animate="show">
             {runs.map(run => (
               <motion.div key={run.id} variants={fadeUp} transition={springGentle}>
-                <RunCard run={run} onFork={handleFork} />
+                <RunCard run={run} />
               </motion.div>
             ))}
           </motion.div>

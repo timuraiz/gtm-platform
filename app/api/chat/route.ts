@@ -27,14 +27,19 @@ App data model:
 
 When the user asks to do something, just do it via tools. Don't ask for confirmation on safe actions.
 
-When the user asks about pipeline / company-quality / ICP refinement (e.g. "почему эти компании в результатах?", "improve ICP", "filter out X"):
-1. Read current state with get_project_icp + get_classify_summary
-2. Read specific examples with list_classified_companies (status='rejected' or 'qualified')
-3. Spot patterns in reasoning + segments — what makes companies fit/not fit
-4. Propose ICP refinements with a concrete diff (which fields you'll change and why)
-5. Apply via update_project_icp — pass the FULL new icp_json, not a patch. ICP is the single source of truth visible to the user in the IcpEditor on the project page.
-6. Validate: reclassify_project_companies on a sample to check new ICP catches the bad ones
-7. Tell the user to click "Start Pipeline" to discover new companies under the updated ICP
+Pipeline = companies pipe only (generate_filters → apollo_search → scrape → classify). Extract people happens separately in the Companies tab on selected qualified companies. Don't suggest "extract people" as a pipeline step — direct the user to the Companies tab.
+
+When the user asks about pipeline / company-quality / ICP refinement (e.g. "почему эти компании в результатах?", "improve ICP", "filter out X", "посмотри последний run"):
+1. If they reference a "run" or "запуск" — call list_pipeline_runs to see recent runs, then get_run_details(run_id) for the specific one. This is per-run analysis: which keywords were used, what Apollo returned, why classifier rejected/qualified specific domains.
+2. If they ask in general (no specific run) — call get_project_icp + get_classify_summary for the project-wide picture.
+3. Read specific examples with list_classified_companies (status='rejected' or 'qualified') for cross-run aggregate.
+4. Spot patterns in reasoning + segments + apollo_keyword_hits — what makes companies fit/not fit and which keywords actually returned hits.
+5. Propose ICP refinements with a concrete diff (which fields you'll change and why).
+6. Apply via update_project_icp — pass the FULL new icp_json, not a patch. ICP is the single source of truth visible to the user in the IcpEditor on the project page.
+7. Validate: reclassify_project_companies on a sample to check new ICP catches the bad ones.
+8. Tell the user to click "Start Pipeline" → Run on each step to discover new companies. The pipeline auto-skips domains already attached to this project, so re-runs only return NEW companies.
+
+Pagination: Apollo returns 50 companies per keyword per page. The current pipeline only fetches page 1. If a run shows apollo_page=N and the user wants more candidates with the same filters, tell them to use the "Load page N+1" button under the run's CTA in the Pipeline tab. That button prepares the panel — the user still clicks Run on apollo_search / scrape / classify themselves. Don't claim you fetched another page; only recommend the action.
 
 ICP fields you can modify (all live under icp_json) — every field below is rendered visibly in the IcpEditor on the project page, so use these:
 - segments — Apollo keyword search phrases. Format: [{"name":"main","keywords":["fintech app","developer tools","B2B SaaS"]}]. Use product/industry words. AVOID fundraising-language ("recently funded", "seed raised") — those phrases live on VC websites and pull VC firms. The IcpEditor surfaces these as "Apollo keywords" chips.
@@ -651,6 +656,78 @@ get_classify_summary: tool({
           const result = await classifyCompanies(project_id, project_company_ids)
           bumpCache()
           return result
+        },
+      }),
+
+      list_pipeline_runs: tool({
+        description: 'List recent companies-pipeline runs for a project with derived counts (found, qualified) and timing. Use to pick which run to inspect or compare runs.',
+        inputSchema: z.object({ project_id: z.string(), limit: z.number().min(1).max(20).default(10) }),
+        execute: async ({ project_id, limit }) => {
+          const { data } = await supabase
+            .from('pipeline_runs')
+            .select('id, status, steps, created_at, updated_at')
+            .eq('project_id', project_id)
+            .order('created_at', { ascending: false })
+            .limit(limit)
+          const runs = ((data ?? []) as Array<{ id: string; status: string; steps: Array<{ name: string; artifact: unknown }>; created_at: string; updated_at: string }>).map(r => {
+            const apollo = r.steps.find(s => s.name === 'apollo_search')?.artifact as { companies_found?: number; page?: number } | undefined
+            const classify = r.steps.find(s => s.name === 'classify')?.artifact as { targets?: number; pre_filtered?: number; total?: number } | undefined
+            const filters = r.steps.find(s => s.name === 'generate_filters')?.artifact as { keywords?: string[] } | undefined
+            return {
+              run_id: r.id,
+              status: r.status,
+              created_at: r.created_at,
+              updated_at: r.updated_at,
+              found: apollo?.companies_found ?? 0,
+              qualified: classify?.targets ?? 0,
+              auto_rejected: classify?.pre_filtered ?? 0,
+              classified_total: classify?.total ?? 0,
+              keyword_count: filters?.keywords?.length ?? 0,
+              apollo_page: apollo?.page ?? 1,
+              steps_completed: r.steps.map(s => s.name),
+            }
+          })
+          return { runs }
+        },
+      }),
+
+      get_run_details: tool({
+        description: 'Get the full artifact bundle of one pipeline run: keywords used, locations, employee ranges, Apollo keyword hits, classification verdicts (with reasoning, segment, confidence). Use to spot why specific companies were rejected/qualified in this particular run before suggesting ICP refinements.',
+        inputSchema: z.object({ run_id: z.string() }),
+        execute: async ({ run_id }) => {
+          const { data } = await supabase
+            .from('pipeline_runs')
+            .select('id, status, steps, created_at, updated_at')
+            .eq('id', run_id)
+            .single()
+          if (!data) return { error: 'Run not found' }
+          const r = data as { id: string; status: string; steps: Array<{ name: string; artifact: unknown }>; created_at: string; updated_at: string }
+          const filters = r.steps.find(s => s.name === 'generate_filters')?.artifact as Record<string, unknown> | undefined
+          const apollo = r.steps.find(s => s.name === 'apollo_search')?.artifact as Record<string, unknown> | undefined
+          const classify = r.steps.find(s => s.name === 'classify')?.artifact as { results?: Array<{ domain: string; name: string; is_target: boolean; confidence: number; segment: string; reasoning: string }>; targets?: number; pre_filtered?: number; total?: number } | undefined
+
+          // Trim classify results to keep tool response compact: take samples per status
+          const allResults = classify?.results ?? []
+          const qualified = allResults.filter(r => r.is_target).slice(0, 12)
+          const rejected = allResults.filter(r => !r.is_target && r.segment !== 'AUTO_REJECTED').slice(0, 12)
+          return {
+            run_id: r.id,
+            status: r.status,
+            created_at: r.created_at,
+            keywords_used: (filters?.keywords as string[] | undefined)?.slice(0, 30) ?? [],
+            locations: (filters?.locations as string[] | undefined) ?? [],
+            employee_ranges: (filters?.employee_ranges as string[] | undefined) ?? [],
+            apollo_keyword_hits: apollo?.keyword_hits ?? {},
+            apollo_companies_found: apollo?.companies_found ?? 0,
+            apollo_page: (apollo?.page as number | undefined) ?? 1,
+            classify_summary: {
+              total: classify?.total ?? 0,
+              targets: classify?.targets ?? 0,
+              pre_filtered_count: classify?.pre_filtered ?? 0,
+            },
+            qualified_samples: qualified.map(q => ({ domain: q.domain, name: q.name, segment: q.segment, confidence: q.confidence, reasoning: q.reasoning })),
+            rejected_samples: rejected.map(q => ({ domain: q.domain, name: q.name, segment: q.segment, confidence: q.confidence, reasoning: q.reasoning })),
+          }
         },
       }),
 

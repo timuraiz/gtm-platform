@@ -179,7 +179,7 @@ async function runApolloSearch(filters: Record<string, unknown>, icp: Record<str
 
   if (apolloError) throw new Error(apolloError)
 
-  return { companies_found: companies.length, title_hits, keyword_hits, companies }
+  return { companies_found: companies.length, title_hits, keyword_hits, companies, page }
 }
 
 type ApolloCompany = {
@@ -251,133 +251,6 @@ async function runScrape(companies: ApolloCompany[]) {
     cache_hits: cacheHits,
     companies: all.map(({ scraped_text: _t, from_cache: _c, ...rest }) => rest),
     _texts: all,
-  }
-}
-
-// Test cap: only first N companies hit Claude; the rest are auto-rejected to keep cost predictable.
-// With CLASSIFY_CONCURRENCY=5 batches of 10, we process up to 50 companies in ~one Claude round-trip.
-const CLASSIFY_TEST_LIMIT = 50
-const CLASSIFY_BATCH_SIZE = 10
-const CLASSIFY_CONCURRENCY = 5
-
-async function claudeWithRetry(system: string, user: string, maxAttempts = 4): Promise<string> {
-  let attempt = 0
-  while (true) {
-    try { return await claude(system, user) }
-    catch (e) {
-      attempt++
-      const msg = e instanceof Error ? e.message : String(e)
-      const isRateLimited = /429|rate.?limit|overloaded|529/i.test(msg)
-      if (!isRateLimited || attempt >= maxAttempts) throw e
-      const wait = 1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250)
-      console.warn(`[runClassify] rate-limited (attempt ${attempt}/${maxAttempts}), retrying in ${wait}ms`)
-      await new Promise(r => setTimeout(r, wait))
-    }
-  }
-}
-
-async function pMap<T, R>(items: T[], concurrency: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length)
-  let cursor = 0
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (true) {
-      const i = cursor++
-      if (i >= items.length) return
-      results[i] = await fn(items[i], i)
-    }
-  })
-  await Promise.all(workers)
-  return results
-}
-
-async function runClassify(
-  scrapeResults: Array<ApolloCompany & { scraped_text?: string; scraped_ok?: boolean }>,
-  icp: unknown,
-  offerText: string,
-) {
-  const toClassify = scrapeResults.slice(0, CLASSIFY_TEST_LIMIT)
-  const autoRejected = scrapeResults.slice(CLASSIFY_TEST_LIMIT)
-
-  const results: Array<{
-    domain: string; name: string;
-    is_target: boolean; confidence: number;
-    segment: string; reasoning: string;
-    logo_url: string | null
-  }> = []
-
-  if (toClassify.length > 0) {
-    const skill = await fetchSkill('company-qualification')
-
-    const batches: typeof toClassify[] = []
-    for (let i = 0; i < toClassify.length; i += CLASSIFY_BATCH_SIZE) {
-      batches.push(toClassify.slice(i, i + CLASSIFY_BATCH_SIZE))
-    }
-
-    const batchOutputs = await pMap(batches, CLASSIFY_CONCURRENCY, async (batch) => {
-      const payload = batch.map(c => ({
-        domain: c.domain,
-        name: c.name,
-        description: c.description ?? '',
-        scraped: (c.scraped_text ?? '').slice(0, 1500),
-      }))
-      const prompt = `Offer: ${offerText}
-ICP: ${JSON.stringify(icp ?? {})}
-
-Classify each company as is_target=true (matches ICP) or false. Return ONLY a JSON array:
-[{"domain":"...","is_target":bool,"confidence":0-100,"segment":"LABEL","reasoning":"..."}]
-
-Companies:
-${JSON.stringify(payload, null, 2)}`
-
-      try {
-        const raw = await claudeWithRetry(skill, prompt)
-        const parsed = JSON.parse(raw) as Array<{ domain: string; is_target: boolean; confidence: number; segment: string; reasoning: string }>
-        return { batch, parsed, error: null as string | null }
-      } catch (e) {
-        return { batch, parsed: [] as Array<{ domain: string; is_target: boolean; confidence: number; segment: string; reasoning: string }>, error: e instanceof Error ? e.message : String(e) }
-      }
-    })
-
-    for (const { batch, parsed, error } of batchOutputs) {
-      const byDomain = Object.fromEntries(parsed.map(r => [r.domain, r]))
-      for (const c of batch) {
-        const r = byDomain[c.domain]
-        if (r) {
-          results.push({
-            domain: c.domain, name: c.name,
-            is_target: r.is_target, confidence: r.confidence,
-            segment: r.segment, reasoning: r.reasoning,
-            logo_url: c.logo_url,
-          })
-        } else {
-          results.push({
-            domain: c.domain, name: c.name,
-            is_target: false, confidence: 0,
-            segment: 'CLASSIFY_FAILED',
-            reasoning: error ? `Claude call failed: ${error}` : 'No verdict returned for this domain',
-            logo_url: c.logo_url,
-          })
-        }
-      }
-    }
-  }
-
-  for (const c of autoRejected) {
-    results.push({
-      domain: c.domain, name: c.name,
-      is_target: false, confidence: 0,
-      segment: 'AUTO_REJECTED',
-      reasoning: `Skipped — only first ${CLASSIFY_TEST_LIMIT} companies are classified in test mode`,
-      logo_url: c.logo_url,
-    })
-  }
-
-  return {
-    total: scrapeResults.length,
-    pre_filtered: autoRejected.length,
-    candidates: toClassify.length,
-    targets: results.filter(r => r.is_target).length,
-    results,
   }
 }
 
@@ -505,14 +378,17 @@ export async function POST(req: Request) {
       .single()
     if (!project) return Response.json({ error: 'Project not found' }, { status: 404 })
 
-    // Get or create run
+    // Get or create run.
+    // extract_people calls from the Companies tab (no parent runId) shouldn't show up as
+    // separate pipeline runs in the history — they're per-company actions, not pipeline runs.
     let runId = existingRunId
     let existingSteps: Array<{ name: string; status: string; artifact: unknown }> = []
+    const trackInRunHistory = !(step === 'extract_people' && !runId)
 
     if (runId) {
       const { data: run } = await supabase.from('pipeline_runs').select('steps').eq('id', runId).single()
       existingSteps = (run?.steps ?? []) as typeof existingSteps
-    } else {
+    } else if (trackInRunHistory) {
       const { data: run } = await supabase
         .from('pipeline_runs')
         .insert({ project_id: projectId, status: 'running' })
@@ -540,7 +416,17 @@ export async function POST(req: Request) {
         const filters = getArtifact('generate_filters') as Record<string, unknown>
         if (!filters) throw new Error('Run generate_filters first')
         const overrideKeywords = (project.run_config_json as { keywords?: string[] } | null)?.keywords
-        artifact = await runApolloSearch(filters, projectIcp, page, seenDomains, overrideKeywords)
+        // Auto-persist of seen domains: pull every domain already attached to this project
+        // so re-runs of apollo_search never re-fetch the same companies, even after refresh.
+        const { data: alreadySeen } = await supabase
+          .from('project_companies')
+          .select('companies(domain)')
+          .eq('project_id', projectId)
+        const persistedDomains = ((alreadySeen ?? []) as unknown as Array<{ companies: { domain: string } | null }>)
+          .map(r => r.companies?.domain)
+          .filter((d): d is string => !!d)
+        const mergedSeen = [...new Set([...persistedDomains, ...seenDomains])]
+        artifact = await runApolloSearch(filters, projectIcp, page, mergedSeen, overrideKeywords)
         break
       }
       case 'scrape': {
@@ -549,21 +435,9 @@ export async function POST(req: Request) {
         artifact = await runScrape(apolloResult.companies)
         break
       }
-      case 'classify': {
-        const scrapeResult = getArtifact('scrape') as { _texts?: Array<ApolloCompany & { scraped_text?: string; scraped_ok?: boolean }> }
-        if (!scrapeResult) throw new Error('Run scrape first')
-        const texts = scrapeResult._texts ?? []
-        artifact = await runClassify(texts, projectIcp, offerText)
-        break
-      }
       case 'extract_people': {
-        const classifyResult = getArtifact('classify') as { results: Array<{ domain: string; is_target: boolean }> }
-        if (!classifyResult && !domainsOverride?.length) throw new Error('Run classify first or pass domainsOverride')
-        const targetDomains = domainsOverride?.length
-          ? domainsOverride
-          : classifyResult.results.filter(r => r.is_target).map(r => r.domain)
-        const offset = domainsOverride?.length ? 0 : domainOffset
-        artifact = await runExtractPeople(targetDomains, projectIcp, false, offset)
+        if (!domainsOverride?.length) throw new Error('extract_people requires domainsOverride (called from Companies tab on selected qualified companies)')
+        artifact = await runExtractPeople(domainsOverride, projectIcp, false, 0)
         break
       }
       default:
@@ -585,29 +459,32 @@ export async function POST(req: Request) {
       }
     }
 
-    // Save step to run
-    const newStep = { name: step, status: 'done', artifact }
-    const updatedSteps = [...existingSteps.filter(s => s.name !== step), newStep]
-    const isExtractPeople = step === 'extract_people'
-    const hasMore = isExtractPeople && (artifact as { has_more: boolean }).has_more
-
-    await supabase.from('pipeline_runs').update({
-      steps: updatedSteps,
-      status: isExtractPeople && !hasMore ? 'done' : isExtractPeople ? 'running' : 'running',
-      updated_at: new Date().toISOString(),
-      ...(isExtractPeople ? {
-        companies_found: (getArtifact('apollo_search') as { companies_found: number } | undefined)?.companies_found ?? 0,
-      } : {}),
-    }).eq('id', runId)
+    // Save step to run (skip when extract_people is invoked standalone from the Companies tab)
+    if (trackInRunHistory && runId) {
+      const newStep = { name: step, status: 'done', artifact }
+      const updatedSteps = [...existingSteps.filter(s => s.name !== step), newStep]
+      // scrape is now the final step in the companies pipeline → mark run done
+      const isFinalStep = step === 'scrape'
+      const updates: Record<string, unknown> = {
+        steps: updatedSteps,
+        status: isFinalStep ? 'done' : 'running',
+        updated_at: new Date().toISOString(),
+      }
+      if (step === 'apollo_search') {
+        updates.companies_found = ((artifact as { companies_found?: number }).companies_found) ?? 0
+      }
+      await supabase.from('pipeline_runs').update(updates).eq('id', runId)
+    }
 
     // Persist companies + contacts on relevant steps
-    if (step === 'classify') {
-      const result = artifact as { results: Array<{ domain: string; name: string; is_target: boolean; confidence: number; segment: string; reasoning: string; logo_url?: string | null }> }
-      if (result.results.length > 0) {
-        // 1. Upsert metadata into global companies (idempotent on domain)
+    if (step === 'scrape') {
+      // After scrape, attach all discovered companies to the project with status='unknown'.
+      // Classification happens later from the Companies tab on user demand (cost control).
+      const scrapeResult = artifact as { companies: Array<{ domain: string; name: string; logo_url: string | null }> }
+      if (scrapeResult.companies.length > 0) {
         const now = new Date().toISOString()
         await supabase.from('companies').upsert(
-          result.results.map(r => ({
+          scrapeResult.companies.map(r => ({
             domain: r.domain,
             name: r.name,
             logo_url: r.logo_url ?? null,
@@ -615,28 +492,23 @@ export async function POST(req: Request) {
           })),
           { onConflict: 'domain' },
         )
-        // 2. Resolve domain → company_id
         const { data: rows } = await supabase
           .from('companies')
           .select('id, domain')
-          .in('domain', result.results.map(r => r.domain))
+          .in('domain', scrapeResult.companies.map(r => r.domain))
         const domainToId = Object.fromEntries((rows ?? []).map((r: { id: string; domain: string }) => [r.domain, r.id]))
-        // 3. Upsert per-project qualification
+        // Use ignoreDuplicates so re-attaching a company that's already classified for the project doesn't reset it
         await supabase.from('project_companies').upsert(
-          result.results
+          scrapeResult.companies
             .filter(r => domainToId[r.domain])
             .map(r => ({
               project_id: projectId,
               company_id: domainToId[r.domain],
               pipeline_run_id: runId,
-              qualification_status: r.is_target ? 'qualified' : 'rejected',
-              is_target: r.is_target,
-              confidence: r.confidence,
-              segment: r.segment,
-              reasoning: r.reasoning,
-              source: 'pipeline',
+              qualification_status: 'unknown' as const,
+              source: 'pipeline' as const,
             })),
-          { onConflict: 'project_id,company_id' },
+          { onConflict: 'project_id,company_id', ignoreDuplicates: true },
         )
       }
     }
@@ -700,8 +572,10 @@ export async function POST(req: Request) {
       const { count } = await supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('project_id', projectId)
       actualContactsCount = count ?? 0
 
-      // Update contacts_found with real deduplicated count
-      await supabase.from('pipeline_runs').update({ contacts_found: actualContactsCount }).eq('id', runId)
+      // Reflect contacts count back to the parent pipeline_run if there is one (skip for standalone Extract people calls)
+      if (runId) {
+        await supabase.from('pipeline_runs').update({ contacts_found: actualContactsCount }).eq('id', runId)
+      }
     }
 
     return Response.json({ runId, step, artifact, ...(actualContactsCount !== undefined ? { contactsTotal: actualContactsCount } : {}) })

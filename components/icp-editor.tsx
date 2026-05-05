@@ -192,8 +192,6 @@ export function IcpEditor({
   const [fundingRounds, setFundingRounds] = useState<string[]>((raw.funding_rounds as string[]) ?? [])
   const [employeeRanges, setEmployeeRanges] = useState<string[]>(normalizeEmployeeRanges((raw.employee_ranges as string[]) ?? []))
   const [trigger, setTrigger] = useState<string>((raw.trigger as string) ?? '')
-  const [targetContacts, setTargetContacts] = useState<number>((raw.target_contacts as number) ?? 100)
-  const [maxCredits, setMaxCredits] = useState<number>((raw.max_credits as number) ?? 200)
 
   function cancel() {
     setOffer(offerText ?? '')
@@ -205,8 +203,6 @@ export function IcpEditor({
     setFundingRounds((raw.funding_rounds as string[]) ?? [])
     setEmployeeRanges(normalizeEmployeeRanges((raw.employee_ranges as string[]) ?? []))
     setTrigger((raw.trigger as string) ?? '')
-    setTargetContacts((raw.target_contacts as number) ?? 100)
-    setMaxCredits((raw.max_credits as number) ?? 200)
     setEditing(false)
   }
 
@@ -221,8 +217,6 @@ export function IcpEditor({
         funding_rounds: fundingRounds,
         employee_ranges: employeeRanges,
         trigger: trigger || undefined,
-        target_contacts: targetContacts,
-        max_credits: maxCredits,
         target_roles: {
           ...(raw.target_roles as object ?? {}),
           primary: titles.slice(0, 3),
@@ -341,42 +335,6 @@ export function IcpEditor({
               />
             </div>
 
-            <div className="pt-1 border-t border-zinc-100 space-y-3">
-              <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide">Pipeline KPI</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] text-zinc-400">Target contacts</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={10}
-                      max={10000}
-                      step={50}
-                      value={targetContacts}
-                      onChange={e => setTargetContacts(Number(e.target.value))}
-                      className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-900 focus:border-zinc-300 focus:bg-white focus:outline-none transition-colors"
-                    />
-                    <span className="text-xs text-zinc-400 shrink-0">contacts</span>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] text-zinc-400">Max budget</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={10}
-                      max={2000}
-                      step={50}
-                      value={maxCredits}
-                      onChange={e => setMaxCredits(Number(e.target.value))}
-                      className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-900 focus:border-zinc-300 focus:bg-white focus:outline-none transition-colors"
-                    />
-                    <span className="text-xs text-zinc-400 shrink-0">credits</span>
-                  </div>
-                  <p className="text-[10px] text-zinc-300">${(maxCredits * 0.01).toFixed(0)} max</p>
-                </div>
-              </div>
-            </div>
           </motion.div>
         ) : hasContent ? (
           <div className="space-y-3">

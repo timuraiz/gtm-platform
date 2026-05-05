@@ -9,6 +9,7 @@ import { ClientLogo } from '@/components/client-logo'
 import { IcpEditor } from '@/components/icp-editor'
 import { ContactsTable } from '@/components/contacts-table'
 import { CompaniesTable } from '@/components/companies-table'
+import { TabFade } from '@/components/tab-fade'
 import { SequenceBuilder } from '@/components/sequence-builder'
 import { ProjectShareButton } from '@/components/project-share-button'
 import { IterationSelector, FirstIterationPrompt } from '@/components/iteration-selector'
@@ -105,17 +106,19 @@ export default async function ProjectPage({
             ))}
           </div>
 
-          {tab === 'companies' ? (
-            <CompaniesTable companies={projectCompanies} projectId={projectId} iterationId={activeIteration.id} />
-          ) : tab === 'contacts' ? (
-            <ContactsTable contacts={contacts} projectId={projectId} iterationId={activeIteration.id} />
-          ) : tab === 'sequences' ? (
-            <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} iterationId={activeIteration.id} iterationChannel={activeIteration.channel} customColumns={customColumns} />
-          ) : tab === 'stats' ? (
-            <IterationStats iterationId={activeIteration.id} initialStats={activeIteration.stats ?? null} uploadedAt={activeIteration.stats_uploaded_at ?? null} />
-          ) : (
-            <ProjectPipelineView projectId={projectId} iterationId={activeIteration.id} initialRuns={runs} icp={project.icp_json as Record<string, unknown> | null} />
-          )}
+          <TabFade tabKey={tab}>
+            {tab === 'companies' ? (
+              <CompaniesTable companies={projectCompanies} projectId={projectId} iterationId={activeIteration.id} />
+            ) : tab === 'contacts' ? (
+              <ContactsTable contacts={contacts} projectId={projectId} iterationId={activeIteration.id} />
+            ) : tab === 'sequences' ? (
+              <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} iterationId={activeIteration.id} iterationChannel={activeIteration.channel} customColumns={customColumns} />
+            ) : tab === 'stats' ? (
+              <IterationStats iterationId={activeIteration.id} initialStats={activeIteration.stats ?? null} uploadedAt={activeIteration.stats_uploaded_at ?? null} />
+            ) : (
+              <ProjectPipelineView projectId={projectId} iterationId={activeIteration.id} initialRuns={runs} icp={project.icp_json as Record<string, unknown> | null} />
+            )}
+          </TabFade>
         </>
       )}
     </div>
