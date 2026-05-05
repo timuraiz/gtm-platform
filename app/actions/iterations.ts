@@ -127,7 +127,11 @@ export type ClientStats = {
   }>
   status_counts: { draft: number; running: number; finished: number; discarded: number }
   launched_this_week: number
-  weekly_launches: Array<{ week_start: string; count: number }>
+  weekly_launches: Array<{ week_start: string; count: number; projects: Array<{ project_id: string; project_name: string; channel: IterationChannel }> }>
+  launch_cadence: {
+    granularity: 'day' | 'week' | 'month' | 'year'
+    buckets: Array<{ bucket_start: string; label: string; count: number; projects: Array<{ project_id: string; project_name: string; channel: IterationChannel }> }>
+  }
   top_sequences: Array<{
     sequence_id: string
     sequence_name: string
@@ -209,6 +213,7 @@ export async function getClientStats(
     status_counts: { draft: 0, running: 0, finished: 0, discarded: 0 },
     launched_this_week: 0,
     weekly_launches: [],
+    launch_cadence: { granularity: 'week', buckets: [] },
     top_sequences: [],
     top_industries: { linkedin: [], email: [] },
     top_roles: { linkedin: [], email: [] },
@@ -239,7 +244,7 @@ export async function getClientStats(
     meetings_booked: number
   }
   const seqMap = new Map<string, SeqAccum>()
-  const launchTimestamps: Date[] = []
+  const launches: Array<{ at: Date; project_id: string; project_name: string; channel: IterationChannel }> = []
 
   const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 
@@ -295,7 +300,7 @@ export async function getClientStats(
       // Launch tracking
       if (it.started_at) {
         const d = new Date(it.started_at)
-        launchTimestamps.push(d)
+        launches.push({ at: d, project_id: proj.id, project_name: proj.name, channel: it.channel })
         if (d >= oneWeekAgo) result.launched_this_week += 1
       }
 
@@ -335,23 +340,85 @@ export async function getClientStats(
     .sort((a, b) => (b.meetings_booked - a.meetings_booked) || (b.replies - a.replies) || (b.leads_sent - a.leads_sent))
     .slice(0, 5)
 
-  // Weekly launches — last 8 weeks
-  const weekly = new Map<string, number>()
-  for (let i = 7; i >= 0; i--) {
-    const d = new Date()
-    d.setHours(0, 0, 0, 0)
-    d.setDate(d.getDate() - d.getDay() - i * 7) // start of week (Sunday)
-    const key = d.toISOString().slice(0, 10)
-    weekly.set(key, 0)
+  // Launch cadence — granularity picked from the active date range:
+  //   no range → last 8 weeks
+  //   ≤ 30 days → daily buckets
+  //   ≤ 24 months → monthly buckets
+  //   > 24 months → yearly buckets
+  type Bucket = { count: number; projects: Array<{ project_id: string; project_name: string; channel: IterationChannel }> }
+  type Gran = 'day' | 'week' | 'month' | 'year'
+  const startOfWeek = (d: Date) => {
+    const x = new Date(d)
+    x.setHours(0, 0, 0, 0)
+    x.setDate(x.getDate() - x.getDay())
+    return x
   }
-  for (const ts of launchTimestamps) {
-    const d = new Date(ts)
-    d.setHours(0, 0, 0, 0)
-    d.setDate(d.getDate() - d.getDay())
-    const key = d.toISOString().slice(0, 10)
-    if (weekly.has(key)) weekly.set(key, (weekly.get(key) ?? 0) + 1)
+  const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
+  const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1)
+  const startOfYear = (d: Date) => new Date(d.getFullYear(), 0, 1)
+
+  const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const labelFor = (d: Date, gran: Gran) => {
+    if (gran === 'day') return `${monthShort[d.getMonth()]} ${d.getDate()}`
+    if (gran === 'week') return `${monthShort[d.getMonth()]} ${d.getDate()}`
+    if (gran === 'month') return `${monthShort[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
+    return String(d.getFullYear())
   }
-  result.weekly_launches = Array.from(weekly.entries()).map(([week_start, count]) => ({ week_start, count }))
+  const truncFor = (d: Date, gran: Gran) =>
+    gran === 'day' ? startOfDay(d)
+    : gran === 'week' ? startOfWeek(d)
+    : gran === 'month' ? startOfMonth(d)
+    : startOfYear(d)
+  const advance = (d: Date, gran: Gran, by = 1) => {
+    const x = new Date(d)
+    if (gran === 'day') x.setDate(x.getDate() + by)
+    else if (gran === 'week') x.setDate(x.getDate() + 7 * by)
+    else if (gran === 'month') x.setMonth(x.getMonth() + by)
+    else x.setFullYear(x.getFullYear() + by)
+    return x
+  }
+
+  let granularity: Gran = 'week'
+  let firstBucket: Date
+  let lastBucket: Date
+  if (fromMs && toMs) {
+    const days = Math.round((toMs - fromMs) / 86_400_000)
+    if (days <= 30) granularity = 'day'
+    else if (days <= 730) granularity = 'month'
+    else granularity = 'year'
+    firstBucket = truncFor(new Date(fromMs), granularity)
+    lastBucket = truncFor(new Date(toMs), granularity)
+  } else {
+    granularity = 'week'
+    firstBucket = startOfWeek(advance(new Date(), 'week', -7))
+    lastBucket = startOfWeek(new Date())
+  }
+
+  const cadence = new Map<string, Bucket>()
+  for (let cur = new Date(firstBucket); cur.getTime() <= lastBucket.getTime(); cur = advance(cur, granularity, 1)) {
+    cadence.set(cur.toISOString(), { count: 0, projects: [] })
+  }
+  for (const launch of launches) {
+    const key = truncFor(launch.at, granularity).toISOString()
+    const bucket = cadence.get(key)
+    if (bucket) {
+      bucket.count += 1
+      bucket.projects.push({ project_id: launch.project_id, project_name: launch.project_name, channel: launch.channel })
+    }
+  }
+  result.launch_cadence = {
+    granularity,
+    buckets: Array.from(cadence.entries()).map(([iso, bucket]) => ({
+      bucket_start: iso,
+      label: labelFor(new Date(iso), granularity),
+      count: bucket.count,
+      projects: bucket.projects,
+    })),
+  }
+  // Legacy: keep weekly_launches populated when granularity is week so existing chart consumers don't break
+  result.weekly_launches = granularity === 'week'
+    ? result.launch_cadence.buckets.map(b => ({ week_start: b.bucket_start.slice(0, 10), count: b.count, projects: b.projects }))
+    : []
 
   // Top industries / roles — sort by iterations desc, then meetings, then replies
   const sortGroup = (m: Map<string, GroupAccum>) => Array.from(m.entries())

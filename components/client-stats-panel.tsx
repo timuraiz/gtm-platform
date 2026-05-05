@@ -30,11 +30,6 @@ function pct(num: number, denom: number): string {
   return `${p.toFixed(p < 10 ? 1 : 0)}%`
 }
 
-function formatWeek(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleDateString('en', { month: 'short', day: 'numeric' })
-}
-
 function ChannelBadge({ channel, size = 'sm' }: { channel: IterationChannel; size?: 'sm' | 'xs' }) {
   const cls = channel === 'linkedin' ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'
   const iconSize = size === 'xs' ? 9 : 10
@@ -130,35 +125,109 @@ function StatCard({ label, value, hint }: { label: string; value: string | numbe
   )
 }
 
-function WeeklyChart({ weekly }: { weekly: ClientStats['weekly_launches'] }) {
-  const max = Math.max(1, ...weekly.map(w => w.count))
-  const total = weekly.reduce((s, w) => s + w.count, 0)
+function WeeklyChart({ cadence }: { cadence: ClientStats['launch_cadence'] }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  const buckets = cadence.buckets
+  const max = Math.max(1, ...buckets.map(b => b.count))
+  const total = buckets.reduce((s, b) => s + b.count, 0)
+  const granLabel = cadence.granularity === 'day' ? 'day'
+    : cadence.granularity === 'month' ? 'month'
+    : cadence.granularity === 'year' ? 'year'
+    : 'week'
+  const subtitle = buckets.length === 0
+    ? `Iterations started per ${granLabel}`
+    : `Iterations started per ${granLabel} · ${buckets.length}`
   return (
     <div className="rounded-2xl border border-zinc-100 bg-white p-5">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-5">
         <div>
           <p className="text-sm font-semibold text-zinc-900">Launch cadence</p>
-          <p className="text-xs text-zinc-400 mt-0.5">Iterations started per week · last 8 weeks</p>
+          <p className="text-xs text-zinc-400 mt-0.5">{subtitle}</p>
         </div>
         <span className="text-xs text-zinc-400 tabular-nums">{total} total</span>
       </div>
-      <div className="flex items-end gap-1.5 h-24">
-        {weekly.map(w => {
-          const h = Math.max(2, (w.count / max) * 100)
-          return (
-            <div key={w.week_start} className="flex-1 flex flex-col items-center gap-1.5">
-              <div className="flex-1 w-full flex items-end">
-                <div
-                  className={`w-full rounded-md transition-all duration-500 ease-out ${w.count > 0 ? 'bg-zinc-800' : 'bg-zinc-100'}`}
-                  style={{ height: `${h}%` }}
-                  title={`${w.count} iteration${w.count === 1 ? '' : 's'}`}
+      <div className="relative">
+        <div className="flex items-end gap-1 h-28" style={{ minHeight: '7rem' }}>
+          {buckets.map((b, idx) => {
+            const ratio = b.count / max
+            const heightPct = b.count > 0 ? Math.max(14, ratio * 100) : 4
+            const isHovered = hoverIdx === idx
+            return (
+              <div
+                key={b.bucket_start}
+                className="group h-full flex-1 flex flex-col items-center justify-end relative"
+                onMouseEnter={() => setHoverIdx(idx)}
+                onMouseLeave={() => setHoverIdx(null)}
+              >
+                <motion.div
+                  className={`w-full max-w-[18px] rounded-full ${
+                    b.count > 0
+                      ? isHovered
+                        ? 'bg-gradient-to-t from-zinc-900 to-zinc-700 shadow-md shadow-zinc-900/15'
+                        : 'bg-gradient-to-t from-zinc-800 to-zinc-600'
+                      : 'bg-zinc-100'
+                  }`}
+                  initial={false}
+                  animate={{
+                    height: `${heightPct}%`,
+                    scaleY: isHovered ? 1.04 : 1,
+                  }}
+                  transition={{
+                    height: { duration: 0.6, ease: [0.16, 1, 0.3, 1] },
+                    scaleY: { duration: 0.18, ease: 'easeOut' },
+                  }}
+                  style={{ transformOrigin: 'bottom' }}
                 />
               </div>
-              <span className="text-[10px] text-zinc-400 tabular-nums">{formatWeek(w.week_start)}</span>
-              <span className="text-[10px] text-zinc-700 font-semibold tabular-nums">{w.count > 0 ? w.count : ''}</span>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
+
+        {/* Bucket labels */}
+        <div className="flex gap-1 mt-2.5">
+          {buckets.map((b, idx) => (
+            <span
+              key={b.bucket_start}
+              className={`flex-1 text-[10px] tabular-nums text-center transition-colors ${
+                hoverIdx === idx ? 'text-zinc-900 font-medium' : 'text-zinc-400'
+              }`}
+            >
+              {b.label}
+            </span>
+          ))}
+        </div>
+
+        {/* Hover tooltip — shows project names for that bucket */}
+        <AnimatePresence>
+          {hoverIdx !== null && buckets[hoverIdx]?.count > 0 && (
+            <motion.div
+              key={`tooltip-${hoverIdx}`}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 4 }}
+              transition={{ duration: 0.15 }}
+              className="absolute -top-2 -translate-y-full left-0 right-0 pointer-events-none flex justify-center"
+              style={{ left: `${(hoverIdx / Math.max(1, buckets.length)) * 100}%`, width: `${100 / Math.max(1, buckets.length)}%` }}
+            >
+              <div className="bg-zinc-900 text-white rounded-lg px-3 py-2 shadow-xl shadow-zinc-900/15 min-w-max max-w-[260px]">
+                <p className="text-xs font-semibold mb-1">
+                  {buckets[hoverIdx].count} iteration{buckets[hoverIdx].count === 1 ? '' : 's'}
+                </p>
+                <ul className="space-y-0.5">
+                  {buckets[hoverIdx].projects.slice(0, 5).map((p, i) => (
+                    <li key={i} className="text-[11px] text-zinc-300 flex items-center gap-1.5">
+                      <span className={`size-1.5 rounded-full ${p.channel === 'linkedin' ? 'bg-blue-400' : 'bg-orange-400'}`} />
+                      <span className="truncate">{p.project_name}</span>
+                    </li>
+                  ))}
+                  {buckets[hoverIdx].projects.length > 5 && (
+                    <li className="text-[10px] text-zinc-500 mt-0.5">+{buckets[hoverIdx].projects.length - 5} more</li>
+                  )}
+                </ul>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   )
@@ -363,7 +432,7 @@ export function ClientStatsPanel({
           </div>
 
           {/* Weekly launches */}
-          <WeeklyChart weekly={stats.weekly_launches} />
+          <WeeklyChart cadence={stats.launch_cadence} />
 
           {/* Channel sub-tabs */}
           <ChannelReport stats={stats} />

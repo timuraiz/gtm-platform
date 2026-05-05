@@ -30,7 +30,7 @@ function buildPrompt(
     ? `\nProven results to reference (use 1–2 selectively, not all):\n${caseStudies.map(cs =>
         `- ${cs.company}${cs.industry ? ` (${cs.industry})` : ''}: ${cs.result}${cs.description ? ` — ${cs.description}` : ''}`
       ).join('\n')}`
-    : ''
+    : '\nNo case studies / customer references are available for this client.'
 
   const icpText = icpJson
     ? `\nTarget ICP:\n- Industries: ${(icpJson.industries as string[] ?? []).join(', ')}\n- Titles: ${(icpJson.titles as string[] ?? []).join(', ')}\n- Pain points: ${(icpJson.pain_points as string[] ?? []).join(', ')}`
@@ -60,7 +60,7 @@ Step types allowed:
 Rules for Email:
 - Every step has a "subject" field
 - First email: compelling subject, value proposition, soft CTA
-- Follow-ups: reference previous email, add new angle or social proof
+- Follow-ups: reference previous email, add new angle
 - Keep emails under 200 words each
 - Day 0: first email; follow-ups spaced 3–5 days apart`
 
@@ -68,6 +68,11 @@ Rules for Email:
   const userNotes = config.user_notes?.trim()
 
   return `You are a B2B outreach copywriter. Write a ${config.steps_count}-step outreach sequence.
+
+CRITICAL — social proof rules:
+- NEVER invent customer names, testimonials, metrics, results, percentages, ROI numbers, or case studies. Hallucinated proof destroys trust the moment a reply asks "wait, who said that?".
+- Only use social proof from the "Proven results to reference" list below. If the list is empty, write the sequence WITHOUT any social proof — pure value proposition, problem framing, and curiosity-based hooks instead.
+- Do not paraphrase real case studies into vaguer claims (e.g. "we've helped many SaaS companies grow 10x") if those numbers aren't in the list. Either cite a specific result from the list verbatim-ish, or skip social proof entirely.
 
 Offer:
 ${offerText ?? 'No offer description provided.'}
