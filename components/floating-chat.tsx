@@ -378,13 +378,32 @@ function FloatingPanel({
         >
           <Plus size={12} />
         </button>
-        <a
-          href={convIdRef.current ? `/chat/${convIdRef.current}` : '/'}
+        <button
+          onClick={async () => {
+            if (convIdRef.current) {
+              router.push(`/chat/${convIdRef.current}`)
+              return
+            }
+            if (messages.length === 0) {
+              router.push('/')
+              return
+            }
+            // No convId yet but messages exist — save first, then navigate
+            const { createConversation, saveConversation } = await import('@/app/actions/conversations')
+            const firstUser = messages.find(m => m.role === 'user')
+            const text = firstUser?.parts.find(p => p.type === 'text')
+            const title = text?.type === 'text' ? text.text.slice(0, 60) : 'Chat'
+            const id = await createConversation(title)
+            await saveConversation(id, messages)
+            convIdRef.current = id
+            onConvIdChange(id)
+            router.push(`/chat/${id}`)
+          }}
           title="Open full chat"
           className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 transition-colors"
         >
           <Maximize2 size={11} />
-        </a>
+        </button>
         <button
           onClick={onMinimize}
           title="Minimize"
