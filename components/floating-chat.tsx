@@ -238,6 +238,7 @@ function FloatingPanel({
         set_iteration_status: 'iteration', invite_team_member: 'team',
         delete_project: 'project', delete_client: 'client',
         update_project_icp: 'project', update_project_offer: 'project',
+        update_iteration_segment: 'iteration',
       }
       if (toolName in mutating) {
         events.push({ kind: mutating[toolName], id, toolName })

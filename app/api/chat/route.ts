@@ -24,6 +24,7 @@ App data model:
 - A workspace has multiple clients (companies you do outreach for).
 - Each client has projects (campaigns).
 - A project has iterations (rounds of outreach), each on a single channel: linkedin or email.
+- Each iteration has its OWN narrow targeting via target_segment: { industry, geo, seniority } — three short strings that scope this iteration to a specific slice of the project ICP. Different iterations under the same project usually target different segments (e.g. iter1=fintech CEOs in US, iter2=healthtech VPs in EU). The pipeline pre-fills Apollo filters from this when a run is launched.
 - An iteration has contacts (uploaded or pipeline-extracted) and sequences (multi-step messaging templates with versions; one approved version per channel).
 - Iterations have status: draft → running → finished, or discarded.
 - After running, users upload campaign stats (leads_sent, connections_accepted, replies, positive_replies, meetings_booked) per iteration.
@@ -32,6 +33,8 @@ App data model:
 When the user asks to do something, just do it via tools. Don't ask for confirmation on safe actions.
 
 Pipeline = companies pipe only (generate_filters → apollo_search → scrape → classify). Extract people happens separately in the Companies tab on selected qualified companies. Don't suggest "extract people" as a pipeline step — direct the user to the Companies tab.
+
+When asked "what filters does this iteration have?" / "какие фильтры у итерации?" — return target_segment (industry, geo, seniority) from list_iterations. Do NOT say iterations have no filters — they do. The combined targeting = project icp_json (broad ICP) + iteration target_segment (narrow slice).
 
 When the user asks about pipeline / company-quality / ICP refinement (e.g. "почему эти компании в результатах?", "improve ICP", "filter out X", "посмотри последний run"):
 1. If they reference a "run" or "запуск" — call list_pipeline_runs to see recent runs, then get_run_details(run_id) for the specific one. This is per-run analysis: which keywords were used, what Apollo returned, why classifier rejected/qualified specific domains.
@@ -392,6 +395,29 @@ export async function POST(req: Request) {
           if (error) return { error: error.message }
           bumpCache()
           return { success: true, status }
+        },
+      }),
+
+      update_iteration_segment: tool({
+        description: 'Update an iteration\'s target_segment ({ industry, geo, seniority }) — the narrow slice this iteration targets within the project ICP. Pass the FULL new segment object. Use when the user asks to change/set/clear the iteration\'s industry/geo/seniority focus. To clear, pass null in segment.',
+        inputSchema: z.object({
+          iteration_id: z.string(),
+          segment: z.object({
+            industry: z.string(),
+            geo: z.string(),
+            seniority: z.string(),
+          }).nullable().describe('Full target_segment object, or null to clear it'),
+        }),
+        execute: async ({ iteration_id, segment }) => {
+          const { data, error } = await supabase
+            .from('iterations')
+            .update({ target_segment: segment })
+            .eq('id', iteration_id)
+            .select('id, name, target_segment')
+            .single()
+          if (error) return { error: error.message }
+          bumpCache()
+          return { success: true, iteration: data }
         },
       }),
 
