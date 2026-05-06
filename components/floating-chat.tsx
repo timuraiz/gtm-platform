@@ -190,7 +190,7 @@ function FloatingPanel({
 
   const context = parsePath(pathname, search)
 
-  const { messages, sendMessage, status } = useChat({
+  const { messages, sendMessage, status, error, regenerate } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
       body: { context },
@@ -198,6 +198,16 @@ function FloatingPanel({
     messages: initialMessages,
   })
   const isLoading = status === 'submitted' || status === 'streaming'
+
+  // Friendly description for the most common backend failures (Anthropic overload, rate limit, network)
+  const errorBanner = (() => {
+    if (!error) return null
+    const msg = (error.message ?? '').toLowerCase()
+    if (msg.includes('overload')) return 'Anthropic is overloaded right now. This usually clears in under a minute.'
+    if (msg.includes('rate limit') || msg.includes('429')) return 'Rate limit hit. Wait a few seconds and retry.'
+    if (msg.includes('fetch') || msg.includes('network')) return 'Network error talking to the model. Check your connection.'
+    return error.message || 'Something went wrong reaching the model.'
+  })()
 
   // Watch for completed tool calls that mutated data → dispatch a global event + refresh server data
   useEffect(() => {
@@ -441,6 +451,20 @@ function FloatingPanel({
           <div className="flex items-center gap-2 text-xs text-zinc-400">
             <span className="size-1 rounded-full bg-zinc-400 animate-pulse" />
             Thinking…
+          </div>
+        )}
+        {errorBanner && !isLoading && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-100 bg-red-50/60 px-3 py-2 text-xs text-red-700">
+            <span className="mt-0.5 size-1.5 rounded-full bg-red-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="leading-snug">{errorBanner}</p>
+              <button
+                onClick={() => regenerate()}
+                className="mt-1 text-[11px] font-medium text-red-600 hover:text-red-800 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
           </div>
         )}
         <div ref={bottomRef} />
