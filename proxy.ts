@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 const PUBLIC_PREFIXES = [
   '/auth',           // sign-in flow
+  '/landing',        // marketing landing page
   '/share',          // public review pages
   '/_next',
   '/favicon.ico',
@@ -35,9 +36,7 @@ export async function proxy(request: NextRequest) {
   const isPublic = PUBLIC_PREFIXES.some(p => path === p || path.startsWith(p + '/'))
 
   if (!user && !isPublic) {
-    const signInUrl = new URL('/auth/sign-in', request.url)
-    if (path !== '/') signInUrl.searchParams.set('next', path + request.nextUrl.search)
-    return NextResponse.redirect(signInUrl)
+    return NextResponse.redirect(new URL('/landing', request.url))
   }
 
   // Logged-in but not on the team allow-list → sign out + redirect
