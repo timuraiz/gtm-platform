@@ -137,6 +137,7 @@ export type ClientStats = {
     email: ChannelTotals
     status_counts: { draft: number; running: number; finished: number; discarded: number }
     launched_this_week: number
+    top_industries: { linkedin: GroupRow[]; email: GroupRow[] }
   }>
   status_counts: { draft: number; running: number; finished: number; discarded: number }
   launched_this_week: number
@@ -243,6 +244,10 @@ export async function getClientStats(
     acc.replies += m?.replies ?? 0
     acc.meetings_booked += m?.meetings_booked ?? 0
   }
+  const sortGroup = (m: Map<string, GroupAccum>) => Array.from(m.entries())
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => (b.iterations - a.iterations) || (b.meetings_booked - a.meetings_booked) || (b.replies - a.replies))
+    .slice(0, 6)
 
   // Track iteration data for advanced aggregations
   type SeqAccum = {
@@ -290,11 +295,13 @@ export async function getClientStats(
       []
     ).filter(Boolean)
 
+    const projIndustryMap = { linkedin: new Map<string, GroupAccum>(), email: new Map<string, GroupAccum>() }
     const projTotals = {
       project_id: proj.id, project_name: proj.name,
       linkedin: emptyTotals(), email: emptyTotals(),
       status_counts: { draft: 0, running: 0, finished: 0, discarded: 0 },
       launched_this_week: 0,
+      top_industries: { linkedin: [] as GroupRow[], email: [] as GroupRow[] },
     }
     for (const it of proj.iterations ?? []) {
       // When a range is active, only include iterations launched within it
@@ -302,7 +309,10 @@ export async function getClientStats(
 
       // Industry / role aggregation per channel (each iteration credited to all targeted industries/roles)
       const ch: 'linkedin' | 'email' = it.channel === 'email' ? 'email' : 'linkedin'
-      for (const ind of projIndustries) accumGroup(industryMap[ch], ind, it.stats)
+      for (const ind of projIndustries) {
+        accumGroup(industryMap[ch], ind, it.stats)
+        accumGroup(projIndustryMap[ch], ind, it.stats)
+      }
       for (const role of projRoles) accumGroup(roleMap[ch], role, it.stats)
 
       // Aggregate channel + project totals
@@ -357,6 +367,10 @@ export async function getClientStats(
       }
     }
     if (projTotals.linkedin.iterations > 0 || projTotals.email.iterations > 0) {
+      projTotals.top_industries = {
+        linkedin: sortGroup(projIndustryMap.linkedin),
+        email: sortGroup(projIndustryMap.email),
+      }
       result.by_project.push(projTotals)
     }
   }
@@ -446,12 +460,7 @@ export async function getClientStats(
     ? result.launch_cadence.buckets.map(b => ({ week_start: b.bucket_start.slice(0, 10), count: b.count, projects: b.projects }))
     : []
 
-  // Top industries / roles — sort by iterations desc, then meetings, then replies
-  const sortGroup = (m: Map<string, GroupAccum>) => Array.from(m.entries())
-    .map(([name, v]) => ({ name, ...v }))
-    .sort((a, b) => (b.iterations - a.iterations) || (b.meetings_booked - a.meetings_booked) || (b.replies - a.replies))
-    .slice(0, 6)
-
+  // Top industries / roles — global (already sorted by sortGroup defined above)
   result.top_industries = { linkedin: sortGroup(industryMap.linkedin), email: sortGroup(industryMap.email) }
   result.top_roles = { linkedin: sortGroup(roleMap.linkedin), email: sortGroup(roleMap.email) }
 

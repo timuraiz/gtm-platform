@@ -422,12 +422,31 @@ function filterStats(stats: ClientStats, selectedIds: string[]): ClientStats {
     }),
   }
 
+  // Merge per-project top_industries from filtered projects
+  type IndAcc = { iterations: number; leads_sent: number; replies: number; meetings_booked: number }
+  function mergeIndustries(channel: 'linkedin' | 'email') {
+    const map = new Map<string, IndAcc>()
+    for (const p of filtered) {
+      for (const row of p.top_industries[channel]) {
+        const acc = map.get(row.name) ?? { iterations: 0, leads_sent: 0, replies: 0, meetings_booked: 0 }
+        acc.iterations += row.iterations; acc.leads_sent += row.leads_sent
+        acc.replies += row.replies; acc.meetings_booked += row.meetings_booked
+        map.set(row.name, acc)
+      }
+    }
+    return Array.from(map.entries())
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, b) => (b.iterations - a.iterations) || (b.meetings_booked - a.meetings_booked))
+      .slice(0, 6)
+  }
+  const top_industries = { linkedin: mergeIndustries('linkedin'), email: mergeIndustries('email') }
+
   return {
     ...stats,
     linkedin, email,
     by_project: filtered,
     status_counts, launched_this_week,
-    top_sequences, launch_cadence,
+    top_sequences, launch_cadence, top_industries,
   }
 }
 
