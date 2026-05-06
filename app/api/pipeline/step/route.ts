@@ -50,15 +50,22 @@ async function scrape(url: string) {
 
 // ─── Step handlers ────────────────────────────────────────────────────────────
 
-async function runGenerateFilters(icp: unknown) {
+type TargetSegment = { industry: string; geo: string; seniority: string }
+
+async function runGenerateFilters(icp: unknown, targetSegment?: TargetSegment | null) {
   const skill = await fetchSkill('apollo-filter-mapping')
-  const raw = await claude(skill, `Generate Apollo search filters for this ICP:\n${JSON.stringify(icp, null, 2)}\n\nReturn ONLY valid JSON.`)
+  const segmentNote = targetSegment
+    ? `\n\nTarget segment for this iteration: industry="${targetSegment.industry}", geo="${targetSegment.geo}", seniority="${targetSegment.seniority}". Narrow filters to this segment.`
+    : ''
+  const raw = await claude(skill, `Generate Apollo search filters for this ICP:\n${JSON.stringify(icp, null, 2)}${segmentNote}\n\nReturn ONLY valid JSON.`)
   const filters = JSON.parse(raw)
   // Fallback geo/size from ICP if missing
   const icpData = icp as Record<string, unknown>
   const apolloFilters = (icpData.apollo_filters ?? {}) as Record<string, unknown>
   if (!filters.locations?.length && apolloFilters.locations) filters.locations = apolloFilters.locations
   if (!filters.employee_ranges?.length && apolloFilters.employee_range) filters.employee_ranges = [apolloFilters.employee_range]
+  // Segment overrides always win
+  if (targetSegment?.geo) filters.locations = [targetSegment.geo]
   return filters
 }
 
@@ -259,16 +266,33 @@ async function runExtractPeople(
   icp: unknown,
   scout = false,
   domainOffset = 0,
+  targetSegment?: TargetSegment | null,
 ) {
   const key = process.env.APOLLO_API_KEY!
   const icpData = icp as Record<string, unknown>
-  // Prefer flat icp.titles (what IcpEditor saves); fall back to target_roles structure
+  const apolloIcp = (icpData.apollo_filters ?? {}) as Record<string, unknown>
+
+  // New ICP: person_seniorities (mapped Apollo values stored by IcpEditor)
+  const seniorities = (apolloIcp.person_seniorities as string[] | undefined) ?? []
+
+  // Legacy ICP: icp.titles or icp.target_roles
   const flatTitles = icpData.titles as string[] | undefined
   const roles = icpData.target_roles as Record<string, string[]> | undefined
   const titles = (flatTitles?.length ? flatTitles : [...(roles?.primary ?? []), ...(roles?.secondary ?? [])]).slice(0, 5)
-  if (titles.length === 0) {
-    throw new Error('ICP has no target titles — set "Target roles" in the IcpEditor before extracting people')
+
+  const useSeniorities = seniorities.length > 0
+
+  if (!useSeniorities && titles.length === 0) {
+    throw new Error('ICP has no seniority or title filters — set "Seniority" in the ICP editor first')
   }
+
+  // If iteration has a specific seniority, narrow to just that Apollo value
+  const effectiveSeniorities = useSeniorities
+    ? (targetSegment?.seniority
+        ? seniorities.filter(s => s.toLowerCase().includes(targetSegment.seniority.toLowerCase().split(' ')[0]))
+            .concat(seniorities).slice(0, 3) // prefer matching, include rest as fallback
+        : seniorities)
+    : []
 
   const domainLimit = scout ? 3 : 25
   const domainsSlice = targetDomains.slice(domainOffset, domainOffset + domainLimit)
@@ -282,7 +306,11 @@ async function runExtractPeople(
     try {
       const params = new URLSearchParams()
       params.set('q_organization_domains_list[]', domain)
-      titles.forEach(t => params.append('person_titles[]', t))
+      if (useSeniorities) {
+        effectiveSeniorities.forEach(s => params.append('person_seniorities[]', s))
+      } else {
+        titles.forEach(t => params.append('person_titles[]', t))
+      }
       params.set('page', '1')
       params.set('per_page', '10')
 
@@ -406,16 +434,27 @@ export async function POST(req: Request) {
     // ICP comes from project.icp_json (managed by IcpEditor), not from a pipeline step
     const projectIcp = (project.icp_json as Record<string, unknown> | null) ?? {}
 
+    // Load iteration's target_segment if provided — used to narrow Apollo filters and people search
+    let targetSegment: TargetSegment | null = null
+    if (iterationId) {
+      const { data: iter } = await supabase.from('iterations').select('target_segment').eq('id', iterationId).single()
+      targetSegment = (iter?.target_segment as TargetSegment | null) ?? null
+    }
+
     switch (step) {
       case 'generate_filters': {
         if (!projectIcp || Object.keys(projectIcp).length === 0) throw new Error('ICP is empty — fill it in the ICP editor first')
-        artifact = await runGenerateFilters(projectIcp)
+        artifact = await runGenerateFilters(projectIcp, targetSegment)
         break
       }
       case 'apollo_search': {
         const filters = getArtifact('generate_filters') as Record<string, unknown>
         if (!filters) throw new Error('Run generate_filters first')
         const overrideKeywords = (project.run_config_json as { keywords?: string[] } | null)?.keywords
+        // If iteration narrows to a specific industry, prepend it as the top keyword
+        const segmentKeywords = targetSegment?.industry
+          ? [targetSegment.industry, ...(overrideKeywords ?? [])]
+          : overrideKeywords
         // Auto-persist of seen domains: pull every domain already attached to this project
         // so re-runs of apollo_search never re-fetch the same companies, even after refresh.
         const { data: alreadySeen } = await supabase
@@ -426,7 +465,7 @@ export async function POST(req: Request) {
           .map(r => r.companies?.domain)
           .filter((d): d is string => !!d)
         const mergedSeen = [...new Set([...persistedDomains, ...seenDomains])]
-        artifact = await runApolloSearch(filters, projectIcp, page, mergedSeen, overrideKeywords)
+        artifact = await runApolloSearch(filters, projectIcp, page, mergedSeen, segmentKeywords)
         break
       }
       case 'scrape': {
@@ -437,7 +476,7 @@ export async function POST(req: Request) {
       }
       case 'extract_people': {
         if (!domainsOverride?.length) throw new Error('extract_people requires domainsOverride (called from Companies tab on selected qualified companies)')
-        artifact = await runExtractPeople(domainsOverride, projectIcp, false, 0)
+        artifact = await runExtractPeople(domainsOverride, projectIcp, false, 0, targetSegment)
         break
       }
       default:
