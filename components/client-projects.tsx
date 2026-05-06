@@ -43,9 +43,6 @@ function ProjectCard({ project, clientId, fresh }: { project: Project; clientId:
               <p className="mt-0.5 text-xs text-zinc-400 line-clamp-2">{project.offer_text}</p>
             )}
           </div>
-          <span className="shrink-0 rounded-lg bg-zinc-50 border border-zinc-100 px-2.5 py-1 text-xs text-zinc-400">
-            ▶ Pipeline
-          </span>
         </div>
 
         {project.icp_json && (

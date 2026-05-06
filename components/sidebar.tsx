@@ -265,8 +265,8 @@ export function Sidebar({
   async function handleDelete(id: string, e: React.MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
+    setConversations(prev => prev.filter(c => c.id !== id))
     await deleteConversation(id)
-    router.refresh()
     if (pathname === `/chat/${id}`) router.push('/')
   }
 
