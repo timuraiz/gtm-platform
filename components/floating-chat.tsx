@@ -69,6 +69,7 @@ export function FloatingChat({ userEmail }: { userEmail: string | null }) {
   const [initialMessages, setInitialMessages] = useState<UIMessage[] | null>(null)
   const [convId, setConvId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [chatKey, setChatKey] = useState(0)
 
   // Restore saved position on mount
   useEffect(() => {
@@ -110,6 +111,7 @@ export function FloatingChat({ userEmail }: { userEmail: string | null }) {
     saveConvId(null)
     setConvId(null)
     setInitialMessages([])
+    setChatKey(k => k + 1)
   }
 
   // Don't render the bubble on home / chat (full-page chat already there)
@@ -134,7 +136,7 @@ export function FloatingChat({ userEmail }: { userEmail: string | null }) {
 
       {open && pos && initialMessages !== null && (
         <FloatingPanel
-          key="panel"
+          key={chatKey}
           pathname={pathname}
           search={typeof window !== 'undefined' ? window.location.search : ''}
           userEmail={userEmail}
