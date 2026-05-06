@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mail, ArrowLeft, AlertCircle, Loader2 } from 'lucide-react'
+import { ArrowLeft, AlertCircle, Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
 const COOLDOWN_KEY = 'gtm_otp_cooldown'
@@ -127,11 +127,10 @@ export function SignInForm({ next }: { next: string }) {
 
   return (
     <div className="w-full max-w-sm">
-      <div className="flex items-center gap-2 mb-8">
-        <span className="size-8 rounded-xl bg-zinc-900 flex items-center justify-center">
-          <Mail size={15} className="text-white" />
-        </span>
-        <span className="text-sm font-semibold text-zinc-900">GTM Platform</span>
+      <div className="mb-10">
+        <p className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-2 lg:hidden">GTM Platform</p>
+        <h1 className="text-2xl font-semibold text-zinc-900 tracking-tight">Welcome back</h1>
+        <p className="text-sm text-zinc-400 mt-1">Sign in to your workspace</p>
       </div>
 
       <AnimatePresence mode="wait">
@@ -146,7 +145,7 @@ export function SignInForm({ next }: { next: string }) {
             className="space-y-5"
           >
             <div>
-              <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Sign in or sign up</h1>
+              <h1 className="sr-only">Sign in</h1>
               <p className="text-sm text-zinc-500 mt-1">We&apos;ll send a 6-digit code to your email</p>
             </div>
 
