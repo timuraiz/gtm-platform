@@ -124,6 +124,8 @@ export type ClientStats = {
     project_name: string
     linkedin: ChannelTotals
     email: ChannelTotals
+    status_counts: { draft: number; running: number; finished: number; discarded: number }
+    launched_this_week: number
   }>
   status_counts: { draft: number; running: number; finished: number; discarded: number }
   launched_this_week: number
@@ -136,6 +138,7 @@ export type ClientStats = {
     sequence_id: string
     sequence_name: string
     share_token: string
+    project_id: string
     project_name: string
     channel: IterationChannel
     iterations: number
@@ -190,7 +193,6 @@ export async function getClientStats(
       )
     `)
     .eq('client_id', clientId)
-  if (projectIds && projectIds.length > 0) query = query.in('id', projectIds)
   const { data: projects } = await query
 
   // Date range filter on iteration.started_at — inclusive bounds
@@ -236,6 +238,7 @@ export async function getClientStats(
     sequence_id: string
     sequence_name: string
     share_token: string
+    project_id: string
     project_name: string
     channel: IterationChannel
     steps: SequenceStepLite[]
@@ -276,7 +279,12 @@ export async function getClientStats(
       []
     ).filter(Boolean)
 
-    const projTotals = { project_id: proj.id, project_name: proj.name, linkedin: emptyTotals(), email: emptyTotals() }
+    const projTotals = {
+      project_id: proj.id, project_name: proj.name,
+      linkedin: emptyTotals(), email: emptyTotals(),
+      status_counts: { draft: 0, running: 0, finished: 0, discarded: 0 },
+      launched_this_week: 0,
+    }
     for (const it of proj.iterations ?? []) {
       // When a range is active, only include iterations launched within it
       if ((fromMs || toMs) && !inRange(it.started_at)) continue
@@ -295,14 +303,20 @@ export async function getClientStats(
         addToTotals(projTotals[channelBucket], it.stats)
       }
 
-      // Status counts
-      if (it.status in result.status_counts) result.status_counts[it.status as IterationStatus] += 1
+      // Status counts (global + per-project)
+      if (it.status in result.status_counts) {
+        result.status_counts[it.status as IterationStatus] += 1
+        projTotals.status_counts[it.status as IterationStatus] += 1
+      }
 
-      // Launch tracking
+      // Launch tracking (global + per-project)
       if (it.started_at) {
         const d = new Date(it.started_at)
         launches.push({ at: d, project_id: proj.id, project_name: proj.name, channel: it.channel })
-        if (d >= oneWeekAgo) result.launched_this_week += 1
+        if (d >= oneWeekAgo) {
+          result.launched_this_week += 1
+          projTotals.launched_this_week += 1
+        }
       }
 
       // Best sequence tracking — credit the approved sequence(s) with the iteration's metrics
@@ -316,6 +330,7 @@ export async function getClientStats(
               sequence_id: seq.id,
               sequence_name: seq.name,
               share_token: seq.share_token,
+              project_id: proj.id,
               project_name: proj.name,
               channel: seq.channel,
               steps: (seq.steps ?? []) as SequenceStepLite[],
@@ -335,11 +350,10 @@ export async function getClientStats(
     }
   }
 
-  // Top sequences by meetings → replies
+  // Top sequences — all sequences returned; client slices to top 5 after project filtering
   result.top_sequences = Array.from(seqMap.values())
     .filter(s => s.iterations > 0)
     .sort((a, b) => (b.meetings_booked - a.meetings_booked) || (b.replies - a.replies) || (b.leads_sent - a.leads_sent))
-    .slice(0, 5)
 
   // Launch cadence — granularity picked from the active date range:
   //   no range → last 8 weeks

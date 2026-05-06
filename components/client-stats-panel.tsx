@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useTransition, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Mail, BarChart3, X, ExternalLink, ChevronDown } from 'lucide-react'
@@ -387,6 +387,50 @@ function TopGroupCard({
   )
 }
 
+function filterStats(stats: ClientStats, selectedIds: string[]): ClientStats {
+  const sel = new Set(selectedIds)
+  if (sel.size === 0 || sel.size >= stats.by_project.length) return { ...stats, top_sequences: stats.top_sequences.slice(0, 5) }
+
+  const filtered = stats.by_project.filter(p => sel.has(p.project_id))
+
+  const linkedin: ClientStats['linkedin'] = { iterations: 0, iterations_with_stats: 0, leads_sent: 0, connections_accepted: 0, replies: 0, positive_replies: 0, meetings_booked: 0 }
+  const email: ClientStats['email'] = { iterations: 0, iterations_with_stats: 0, leads_sent: 0, connections_accepted: 0, replies: 0, positive_replies: 0, meetings_booked: 0 }
+  const status_counts = { draft: 0, running: 0, finished: 0, discarded: 0 }
+  let launched_this_week = 0
+
+  for (const p of filtered) {
+    for (const k of Object.keys(linkedin) as (keyof typeof linkedin)[]) {
+      linkedin[k] += p.linkedin[k]
+      email[k] += p.email[k]
+    }
+    status_counts.draft += p.status_counts.draft
+    status_counts.running += p.status_counts.running
+    status_counts.finished += p.status_counts.finished
+    status_counts.discarded += p.status_counts.discarded
+    launched_this_week += p.launched_this_week
+  }
+
+  const top_sequences = stats.top_sequences
+    .filter(s => sel.has(s.project_id))
+    .slice(0, 5)
+
+  const launch_cadence = {
+    granularity: stats.launch_cadence.granularity,
+    buckets: stats.launch_cadence.buckets.map(b => {
+      const projects = b.projects.filter(p => sel.has(p.project_id))
+      return { ...b, count: projects.length, projects }
+    }),
+  }
+
+  return {
+    ...stats,
+    linkedin, email,
+    by_project: filtered,
+    status_counts, launched_this_week,
+    top_sequences, launch_cadence,
+  }
+}
+
 export function ClientStatsPanel({
   stats,
   range,
@@ -398,55 +442,74 @@ export function ClientStatsPanel({
   allProjects: Array<{ id: string; name: string }>
   selectedProjectIds: string[]
 }) {
-  const totalIterations = stats.linkedin.iterations + stats.email.iterations
+  const [isPending, startTransition] = useTransition()
+  // [] from URL means "all" — expand to all IDs so local state is always explicit
+  const expandIds = (ids: string[]) => ids.length === 0 ? allProjects.map(p => p.id) : ids
+  const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => expandIds(selectedProjectIds))
+
+  // Reset local selection when server sends new stats (e.g. date range changed)
+  useEffect(() => { setLocalSelectedIds(expandIds(selectedProjectIds)) }, [stats])
+
+  const filteredStats = useMemo(
+    () => filterStats(stats, localSelectedIds),
+    [stats, localSelectedIds],
+  )
+
+  const totalIterations = filteredStats.linkedin.iterations + filteredStats.email.iterations
   const empty = totalIterations === 0
-  const totalMeetings = stats.linkedin.meetings_booked + stats.email.meetings_booked
+  const totalMeetings = filteredStats.linkedin.meetings_booked + filteredStats.email.meetings_booked
 
   return (
     <div className="space-y-6">
       <div className="flex items-start gap-x-2 gap-y-3 flex-wrap">
-        <DateRangePicker range={range} />
-        <ProjectsPicker allProjects={allProjects} selectedIds={selectedProjectIds} />
+        <DateRangePicker range={range} isPending={isPending} startTransition={startTransition} />
+        <ProjectsPicker
+          allProjects={allProjects}
+          selectedIds={localSelectedIds}
+          onChange={setLocalSelectedIds}
+        />
       </div>
-      {empty ? (
-        <div className="flex flex-col items-center justify-center py-20 text-zinc-400 gap-2">
-          <BarChart3 size={28} className="text-zinc-300" />
-          <p className="text-sm">No campaign data yet</p>
-          <p className="text-xs">Run iterations under projects to see aggregated stats here</p>
-        </div>
-      ) : (
-        <>
-          {/* Quick stat cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard
-              label="Launched this week"
-              value={stats.launched_this_week}
-              hint={`${stats.status_counts.running} running · ${stats.status_counts.finished} finished`}
-            />
-            <StatCard
-              label="Total iterations"
-              value={totalIterations}
-              hint={`${stats.status_counts.draft} draft · ${stats.status_counts.discarded} discarded`}
-            />
-            <StatCard
-              label="Total meetings"
-              value={totalMeetings}
-              hint={`${stats.linkedin.meetings_booked} LI · ${stats.email.meetings_booked} Email`}
-            />
-            <StatCard
-              label="Total replies"
-              value={stats.linkedin.replies + stats.email.replies}
-              hint={`${stats.linkedin.positive_replies + stats.email.positive_replies} positive`}
-            />
+      <div className={`space-y-6 transition-opacity duration-150 ${isPending ? 'opacity-40 pointer-events-none' : ''}`}>
+        {empty ? (
+          <div className="flex flex-col items-center justify-center py-20 text-zinc-400 gap-2">
+            <BarChart3 size={28} className="text-zinc-300" />
+            <p className="text-sm">No campaign data yet</p>
+            <p className="text-xs">Run iterations under projects to see aggregated stats here</p>
           </div>
+        ) : (
+          <>
+            {/* Quick stat cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatCard
+                label="Launched this week"
+                value={filteredStats.launched_this_week}
+                hint={`${filteredStats.status_counts.running} running · ${filteredStats.status_counts.finished} finished`}
+              />
+              <StatCard
+                label="Total iterations"
+                value={totalIterations}
+                hint={`${filteredStats.status_counts.draft} draft · ${filteredStats.status_counts.discarded} discarded`}
+              />
+              <StatCard
+                label="Total meetings"
+                value={totalMeetings}
+                hint={`${filteredStats.linkedin.meetings_booked} LI · ${filteredStats.email.meetings_booked} Email`}
+              />
+              <StatCard
+                label="Total replies"
+                value={filteredStats.linkedin.replies + filteredStats.email.replies}
+                hint={`${filteredStats.linkedin.positive_replies + filteredStats.email.positive_replies} positive`}
+              />
+            </div>
 
-          {/* Weekly launches */}
-          <WeeklyChart cadence={stats.launch_cadence} />
+            {/* Weekly launches */}
+            <WeeklyChart cadence={filteredStats.launch_cadence} />
 
-          {/* Channel sub-tabs */}
-          <ChannelReport stats={stats} />
-        </>
-      )}
+            {/* Channel sub-tabs */}
+            <ChannelReport stats={filteredStats} />
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -566,10 +629,18 @@ function ChannelReport({ stats }: { stats: ClientStats }) {
   )
 }
 
-function DateRangePicker({ range }: { range: { from: string | null; to: string | null } }) {
+function DateRangePicker({
+  range,
+  isPending,
+  startTransition,
+}: {
+  range: { from: string | null; to: string | null }
+  isPending: boolean
+  startTransition: (fn: () => void) => void
+}) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [pending, startTransition] = useTransition()
+  const pending = isPending
   const [open, setOpen] = useState(false)
   const [draftFrom, setDraftFrom] = useState(range.from ?? '')
   const [draftTo, setDraftTo] = useState(range.to ?? '')
@@ -686,13 +757,12 @@ function DateRangePicker({ range }: { range: { from: string | null; to: string |
 function ProjectsPicker({
   allProjects,
   selectedIds,
+  onChange,
 }: {
   allProjects: Array<{ id: string; name: string }>
   selectedIds: string[]
+  onChange: (ids: string[]) => void
 }) {
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const [pending, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -704,38 +774,30 @@ function ProjectsPicker({
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [open])
 
-  function applyIds(ids: string[]) {
-    const params = new URLSearchParams(Array.from(searchParams.entries()))
-    if (ids.length > 0) params.set('projects', ids.join(','))
-    else params.delete('projects')
-    startTransition(() => {
-      router.push(`?${params.toString()}`, { scroll: false })
-    })
-  }
-
   function toggle(id: string) {
     const set = new Set(selectedIds)
     if (set.has(id)) set.delete(id)
     else set.add(id)
-    applyIds(Array.from(set))
+    onChange(Array.from(set))
   }
 
-  function clearAll() { applyIds([]) }
+  function selectAll() { onChange(allProjects.map(p => p.id)) }
 
-  const allSelected = selectedIds.length === 0 || selectedIds.length === allProjects.length
+  const allSelected = selectedIds.length === allProjects.length
   const label = allSelected
     ? `All projects (${allProjects.length})`
     : selectedIds.length === 1
       ? allProjects.find(p => p.id === selectedIds[0])?.name ?? '1 project'
-      : `${selectedIds.length} projects`
+      : selectedIds.length === 0
+        ? 'No projects'
+        : `${selectedIds.length} projects`
 
   return (
     <div className="flex items-center gap-2 flex-wrap" ref={ref}>
       <div className="relative">
         <button
           onClick={() => setOpen(o => !o)}
-          disabled={pending}
-          className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition-colors disabled:opacity-50 max-w-[280px] truncate"
+          className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition-colors max-w-[280px] truncate"
         >
           {label}
         </button>
@@ -743,18 +805,21 @@ function ProjectsPicker({
           <div className="absolute left-0 top-full mt-1.5 z-30 w-72 rounded-xl border border-zinc-100 bg-white shadow-lg overflow-hidden">
             <div className="px-3 py-2 border-b border-zinc-100 flex items-center justify-between">
               <span className="text-[11px] uppercase tracking-widest text-zinc-400 font-medium">Filter</span>
-              <button
-                onClick={clearAll}
-                className="text-[11px] text-zinc-400 hover:text-zinc-700 transition-colors"
-              >
-                {selectedIds.length === 0 ? 'All selected' : 'Select all'}
-              </button>
+              {!allSelected && (
+                <button
+                  onClick={selectAll}
+                  className="text-[11px] text-zinc-400 hover:text-zinc-700 transition-colors"
+                >
+                  Select all
+                </button>
+              )}
+              {allSelected && <span className="text-[11px] text-zinc-400">All selected</span>}
             </div>
             <div className="max-h-72 overflow-y-auto py-1">
               {allProjects.length === 0 ? (
                 <p className="px-3 py-3 text-xs text-zinc-400">No projects yet</p>
               ) : allProjects.map(p => {
-                const checked = selectedIds.length === 0 || selectedIds.includes(p.id)
+                const checked = selectedIds.includes(p.id)
                 return (
                   <label key={p.id} className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-50 cursor-pointer">
                     <input
@@ -771,13 +836,13 @@ function ProjectsPicker({
           </div>
         )}
       </div>
-      {selectedIds.length > 0 && selectedIds.length < allProjects.length && (
+      {!allSelected && selectedIds.length > 0 && (
         <button
-          onClick={clearAll}
+          onClick={selectAll}
           className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-700 transition-colors"
         >
           <X size={12} />
-          Clear
+          Reset
         </button>
       )}
     </div>
