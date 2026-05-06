@@ -135,8 +135,24 @@ async function describeContext(ctx: RouteContext, supabase: Awaited<ReturnType<t
     if (p) {
       let s = `User is on the project page for "${p.name}" (project_id=${p.id}, client_id=${p.client_id}${clientName ? `, client_name="${clientName}"` : ''}).`
       if (ctx.tab) s += ` Active tab: ${ctx.tab}.`
-      if (ctx.iter) s += ` Active iteration_id=${ctx.iter}.`
-      s += ' Default to using these IDs when they refer to "this project" / "this iteration".'
+      if (ctx.iter) {
+        s += ` Active iteration_id=${ctx.iter}.`
+        // Preload the active iteration's row so the assistant doesn't have to call list_iterations
+        // (and can't hallucinate that target_segment is empty).
+        const { data: iter } = await supabase
+          .from('iterations')
+          .select('id, name, status, channel, target_segment')
+          .eq('id', ctx.iter)
+          .single()
+        if (iter) {
+          const ts = iter.target_segment as { industry?: string; geo?: string; seniority?: string } | null
+          const segStr = ts
+            ? `target_segment={industry: ${JSON.stringify(ts.industry ?? null)}, geo: ${JSON.stringify(ts.geo ?? null)}, seniority: ${JSON.stringify(ts.seniority ?? null)}}`
+            : 'target_segment=null (not configured)'
+          s += ` Active iteration: name="${iter.name}", status=${iter.status}, channel=${iter.channel}, ${segStr}.`
+        }
+      }
+      s += ' Default to using these IDs when they refer to "this project" / "this iteration". When the user asks about THIS iteration\'s filters/segment, use the target_segment values shown above directly — do NOT claim they are unset if values are present.'
       return s
     }
   }
