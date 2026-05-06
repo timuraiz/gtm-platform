@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useTransition, useCallback } from 'react'
+import { useState, useRef, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -116,41 +116,38 @@ export function SignInForm({ next }: { next: string }) {
     })
   }
 
-  const handleDigitChange = useCallback((index: number, val: string) => {
-    const digit = val.replace(/\D/g, '').slice(-1)
-    setDigits(prev => {
-      const next = [...prev]
-      next[index] = digit
-      if (digit && index === 5) {
-        const full = next.join('')
-        if (full.length === 6) setTimeout(() => verifyOtp(full), 0)
-      }
-      return next
-    })
-    if (digit && index < 5) {
-      digitRefs.current[index + 1]?.focus()
+  // Auto-submit when all 6 digits filled — useEffect ensures verifyOtp captures fresh email state
+  useEffect(() => {
+    const full = digits.join('')
+    if (full.length === 6 && digits.every(d => d !== '')) {
+      verifyOtp(full)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleDigitKeyDown = useCallback((index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !digits[index] && index > 0) {
-      digitRefs.current[index - 1]?.focus()
-    }
-    if (e.key === 'ArrowLeft' && index > 0) digitRefs.current[index - 1]?.focus()
-    if (e.key === 'ArrowRight' && index < 5) digitRefs.current[index + 1]?.focus()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [digits])
 
-  const handleDigitPaste = useCallback((e: React.ClipboardEvent) => {
+  function handleDigitChange(index: number, val: string) {
+    const digit = val.replace(/\D/g, '').slice(-1)
+    const next = [...digits]
+    next[index] = digit
+    setDigits(next)
+    if (digit && index < 5) digitRefs.current[index + 1]?.focus()
+  }
+
+  function handleDigitKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Backspace' && !digits[index] && index > 0) digitRefs.current[index - 1]?.focus()
+    if (e.key === 'ArrowLeft' && index > 0) digitRefs.current[index - 1]?.focus()
+    if (e.key === 'ArrowRight' && index < 5) digitRefs.current[index + 1]?.focus()
+  }
+
+  function handleDigitPaste(e: React.ClipboardEvent) {
     e.preventDefault()
     const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
     if (!pasted) return
     const next = Array(6).fill('')
     pasted.split('').forEach((ch, i) => { next[i] = ch })
     setDigits(next)
-    const focusIdx = Math.min(pasted.length, 5)
-    digitRefs.current[focusIdx]?.focus()
-    if (pasted.length === 6) verifyOtp(pasted)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    digitRefs.current[Math.min(pasted.length, 5)]?.focus()
+  }
 
   function handleCodeSubmit(e: React.FormEvent) {
     e.preventDefault()
