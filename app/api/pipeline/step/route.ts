@@ -625,16 +625,31 @@ export async function POST(req: Request) {
         }
 
         if (rows.length > 0) {
-          // Filter out emails already in DB for this project
-          const emailsToCheck = rows.map(r => r.email).filter(Boolean) as string[]
-          const existingEmails = new Set<string>()
-          if (emailsToCheck.length > 0) {
-            const { data: existing } = await supabase.from('contacts').select('email').eq('project_id', projectId).in('email', emailsToCheck)
-            for (const r of existing ?? []) if (r.email) existingEmails.add(r.email)
+          // Filter out emails already in this iteration (NOT the whole project — same
+          // person legitimately may be re-targeted in another iteration).
+          let dropped_email_dup = 0
+          if (iterationId) {
+            const emailsToCheck = rows.map(r => r.email).filter(Boolean) as string[]
+            const existingEmails = new Set<string>()
+            if (emailsToCheck.length > 0) {
+              const { data: existing } = await supabase
+                .from('contacts')
+                .select('email')
+                .eq('iteration_id', iterationId)
+                .in('email', emailsToCheck)
+              for (const r of existing ?? []) if (r.email) existingEmails.add(r.email)
+            }
+            const before = rows.length
+            const deduped = rows.filter(r => !r.email || !existingEmails.has(r.email))
+            dropped_email_dup = before - deduped.length
+            if (deduped.length > 0) {
+              await supabase.from('contacts').upsert(deduped, { onConflict: 'iteration_id,linkedin_url', ignoreDuplicates: true })
+            }
+          } else {
+            await supabase.from('contacts').upsert(rows, { onConflict: 'iteration_id,linkedin_url', ignoreDuplicates: true })
           }
-          const deduped = rows.filter(r => !r.email || !existingEmails.has(r.email))
-          if (deduped.length > 0) {
-            await supabase.from('contacts').upsert(deduped, { onConflict: 'iteration_id,linkedin_url', ignoreDuplicates: true })
+          if (dropped_email_dup > 0) {
+            console.log(`[extract_people] dropped ${dropped_email_dup} contacts already present in this iteration by email`)
           }
         }
       }
