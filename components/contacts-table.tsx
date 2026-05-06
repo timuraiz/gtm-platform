@@ -104,16 +104,24 @@ export function ContactsTable({
     } finally { setDeleting(false) }
   }
 
-  async function handleBulkDelete() {
-    if (selected.size === 0) return
+  async function handleBulkDelete(idsArg?: string[]) {
+    const ids = idsArg ?? Array.from(selected)
+    if (ids.length === 0) return
     setDeleting(true)
     try {
-      const ids = Array.from(selected)
+      const idSet = new Set(ids)
       await deleteContacts(ids)
-      setContacts(prev => prev.filter(c => !selected.has(c.id)))
+      setContacts(prev => prev.filter(c => !idSet.has(c.id)))
       setSelected(new Set())
       router.refresh()
     } finally { setDeleting(false) }
+  }
+
+  async function bulkDeleteAll() {
+    const ids = filtered.map(c => c.id)
+    if (ids.length === 0) return
+    if (!confirm(`Delete ${ids.length} contact${ids.length === 1 ? '' : 's'} from this iteration? This cannot be undone.`)) return
+    await handleBulkDelete(ids)
   }
 
   function toggleRow(id: string) {
@@ -211,7 +219,7 @@ export function ContactsTable({
         <span className="text-sm text-zinc-400">{filtered.length} of {contacts.length}</span>
         {!readOnly && selected.size > 0 && (
           <button
-            onClick={handleBulkDelete}
+            onClick={() => handleBulkDelete()}
             disabled={deleting}
             className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
           >
@@ -220,7 +228,18 @@ export function ContactsTable({
           </button>
         )}
         {!readOnly && (
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="ml-auto flex items-center gap-1.5 flex-wrap">
+            {filtered.length > 0 && selected.size === 0 && (
+              <button
+                onClick={bulkDeleteAll}
+                disabled={deleting}
+                title={`Delete ${filtered.length} ${filter === 'all' ? '' : filter} contact${filtered.length === 1 ? '' : 's'} from this iteration`}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50 transition-colors"
+              >
+                <Trash2 size={13} />
+                Delete all ({filtered.length})
+              </button>
+            )}
             {canUpload && (
               <button
                 onClick={() => setShowUpload(true)}
