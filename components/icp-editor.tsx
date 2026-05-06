@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Pencil, Check, X, Plus } from 'lucide-react'
 import { updateProjectIcp, updateProjectOffer } from '@/app/actions/projects'
@@ -190,6 +190,12 @@ export function IcpEditor({
   const [saving, setSaving] = useState(false)
 
   const [offer, setOffer] = useState(offerText ?? '')
+
+  // Sync local offer with the latest server value when it changes (e.g. chat assistant edited it)
+  // — but only when not actively editing, so we don't stomp the user's pending text.
+  useEffect(() => {
+    if (!editing) setOffer(offerText ?? '')
+  }, [offerText, editing])
   const [geo, setGeo] = useState<string[]>(readGeo(raw))
   const [industries, setIndustries] = useState<string[]>(readIndustries(raw))
   const [seniorities, setSeniorities] = useState<string[]>(readSeniorities(raw))
@@ -237,7 +243,9 @@ export function IcpEditor({
       // remove legacy fields
       delete merged.titles
       delete merged.target_roles
-      await updateProjectIcp(projectId, merged)
+      const tasks: Promise<unknown>[] = [updateProjectIcp(projectId, merged)]
+      if (offer !== (offerText ?? '')) tasks.push(updateProjectOffer(projectId, offer))
+      await Promise.all(tasks)
       setEditing(false)
     } finally {
       setSaving(false)

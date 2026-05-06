@@ -7,6 +7,7 @@ import { getIterations } from '@/app/actions/iterations'
 import { ProjectPipelineView } from '@/components/project-pipeline-view'
 import { ClientLogo } from '@/components/client-logo'
 import { IcpEditor } from '@/components/icp-editor'
+import { AnimatedOfferText } from '@/components/animated-offer-text'
 import { ContactsTable } from '@/components/contacts-table'
 import { CompaniesTable } from '@/components/companies-table'
 import { TabFade } from '@/components/tab-fade'
@@ -61,9 +62,7 @@ export default async function ProjectPage({
       <div className="mb-8 flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-zinc-900">{project.name}</h1>
-          {project.offer_text && (
-            <p className="mt-1 text-sm text-zinc-500 max-w-2xl">{project.offer_text}</p>
-          )}
+          <AnimatedOfferText text={project.offer_text as string | null} />
         </div>
         {shareToken && <ProjectShareButton token={shareToken} />}
       </div>

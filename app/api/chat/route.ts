@@ -56,6 +56,11 @@ ICP fields you can modify (all live under icp_json) — every field below is ren
 - exclusions — phrases the classifier uses to reject (e.g. "VC funds", "Branding studios", "Accelerators"). Strong signal for classify step.
 - trigger — single string for trigger signal.
 
+Project description / offer text:
+- The "project description" / "offer description" / "описание проекта" / "offer_text" is a SEPARATE field from icp_json. It's the paragraph rendered at the top of the project page and inside the IcpEditor's "Offer description" textarea.
+- When the user asks to rewrite / translate / shorten / polish the project description or offer, you MUST call update_project_offer with the new full text. Do NOT claim "done" without calling the tool — read get_project_icp first if you don't already have the current text, then call update_project_offer.
+- update_project_icp does NOT touch offer_text. Use update_project_offer for the description.
+
 CRITICAL — you CANNOT run the pipeline. There is no tool to trigger apollo_search / scrape / extract_people.
 Your tools only let you (a) read project state, (b) mutate ICP/qualification, (c) reclassify existing companies. New companies from Apollo come ONLY when the user clicks "Start Pipeline" in the UI.
 
@@ -588,6 +593,25 @@ export async function POST(req: Request) {
           if (error) return { error: error.message }
           bumpCache()
           return { success: true, icp }
+        },
+      }),
+
+      update_project_offer: tool({
+        description: 'Update the project description / offer_text — the human-readable paragraph shown at the top of the project page and used as the offer description in ICP filters. Pass the FULL new text (not a diff). Use this when the user asks to rewrite, translate, shorten, or polish the project description / offer / описание проекта.',
+        inputSchema: z.object({
+          project_id: z.string(),
+          offer_text: z.string().describe('Full new offer description / project description text'),
+        }),
+        execute: async ({ project_id, offer_text }) => {
+          const { data, error } = await supabase
+            .from('projects')
+            .update({ offer_text })
+            .eq('id', project_id)
+            .select('id, name, offer_text')
+            .single()
+          if (error) return { error: error.message }
+          bumpCache()
+          return { success: true, project: data }
         },
       }),
 
