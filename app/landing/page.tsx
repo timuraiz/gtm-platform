@@ -31,7 +31,7 @@ export default function LandingPage() {
     >
       {/* Nav */}
       <nav className="flex items-center justify-between px-8 py-6 max-w-6xl mx-auto w-full">
-        <span className="text-sm font-semibold tracking-tight">GTM Platform</span>
+        <span className="text-sm font-semibold tracking-tight">Leadsmore</span>
         <Link
           href="/auth/sign-in"
           className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors"

@@ -737,7 +737,7 @@ export function Chat({
               className="flex flex-col items-center justify-center h-full gap-6 text-center"
             >
               <div>
-                <h2 className="text-xl font-semibold text-zinc-900">GTM Assistant</h2>
+                <h2 className="text-xl font-semibold text-zinc-900">Leadsmore AI</h2>
                 <p className="text-sm text-zinc-400 mt-1">Manage clients and projects through chat</p>
               </div>
               <motion.div

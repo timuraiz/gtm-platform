@@ -23,7 +23,7 @@ export default async function SignInPage({
         }}
       >
         <a href="/landing" className="text-sm font-semibold text-white tracking-tight">
-          GTM Platform
+          Leadsmore
         </a>
 
         <div className="flex-1 flex flex-col justify-center gap-10">
@@ -53,7 +53,7 @@ export default async function SignInPage({
           </div>
         </div>
 
-        <p className="text-xs text-zinc-700">© 2025 GTM Platform</p>
+        <p className="text-xs text-zinc-700">© 2026 Leadsmore</p>
       </div>
 
       {/* Right — auth form */}

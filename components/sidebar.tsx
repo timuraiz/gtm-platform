@@ -309,7 +309,7 @@ export function Sidebar({
         <aside className="w-56 shrink-0 flex flex-col">
           <div className="flex flex-col flex-1 bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden">
             <div className="px-4 py-4 border-b border-zinc-100">
-              <span className="text-sm font-semibold text-zinc-900">GTM Platform</span>
+              <span className="text-sm font-semibold text-zinc-900">Leadsmore</span>
             </div>
 
             <div className="flex-1 overflow-y-auto">

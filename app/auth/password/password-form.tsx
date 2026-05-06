@@ -44,7 +44,7 @@ export function PasswordForm({ next }: { next: string }) {
         <span className="size-8 rounded-xl bg-zinc-900 flex items-center justify-center">
           <Mail size={15} className="text-white" />
         </span>
-        <span className="text-sm font-semibold text-zinc-900">GTM Platform</span>
+        <span className="text-sm font-semibold text-zinc-900">Leadsmore</span>
       </div>
 
       <div>

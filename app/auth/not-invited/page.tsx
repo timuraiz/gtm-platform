@@ -9,7 +9,7 @@ export default function NotInvitedPage() {
           <span className="size-8 rounded-xl bg-zinc-900 flex items-center justify-center">
             <Mail size={15} className="text-white" />
           </span>
-          <span className="text-sm font-semibold text-zinc-900">GTM Platform</span>
+          <span className="text-sm font-semibold text-zinc-900">Leadsmore</span>
         </div>
         <ShieldOff size={28} className="text-zinc-300 mx-auto" strokeWidth={1.5} />
         <div>

@@ -128,7 +128,7 @@ export function SignInForm({ next }: { next: string }) {
   return (
     <div className="w-full max-w-sm">
       <div className="mb-10">
-        <p className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-2 lg:hidden">GTM Platform</p>
+        <p className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-2 lg:hidden">Leadsmore</p>
         <h1 className="text-2xl font-semibold text-zinc-900 tracking-tight">Welcome back</h1>
         <p className="text-sm text-zinc-400 mt-1">Sign in to your workspace</p>
       </div>

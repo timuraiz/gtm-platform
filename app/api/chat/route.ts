@@ -10,7 +10,7 @@ function bumpCache() {
   revalidatePath('/', 'layout')
 }
 
-const SYSTEM = `You are a GTM (Go-to-Market) assistant inside a B2B outbound platform.
+const SYSTEM = `You are a B2B outbound assistant inside Leadsmore — a platform for running structured outreach campaigns.
 
 STYLE — follow these rules in every single message, no exceptions:
 - NEVER use emoji. Not even one. Zero emoji anywhere in any response.
@@ -96,7 +96,7 @@ async function extractIcp(context: string) {
 
 async function scrapeUrl(url: string): Promise<string> {
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GTMBot/1.0)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LeadsmoreBot/1.0)' },
     signal: AbortSignal.timeout(10_000),
   })
   return (await res.text())

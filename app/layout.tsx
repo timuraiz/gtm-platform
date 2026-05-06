@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GTM Platform",
+  title: "Leadsmore",
 };
 
 export default function RootLayout({
