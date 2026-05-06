@@ -10,7 +10,7 @@ export type IterationChannel = 'linkedin' | 'email'
 export type TargetSegment = {
   industry: string
   geo: string
-  roles: string[]
+  seniority: string
 }
 
 export type Iteration = {

@@ -33,10 +33,9 @@ function icpIndustries(icp: IcpRaw): string[] {
   if (Array.isArray(af?.industries)) return af!.industries as string[]
   return []
 }
-function icpTitles(icp: IcpRaw): string[] {
-  if (Array.isArray(icp.titles) && icp.titles.length) return icp.titles as string[]
+function icpSeniorities(icp: IcpRaw): string[] {
   const tr = icp.target_roles as Record<string, string[]> | undefined
-  if (tr) return [...(tr.primary ?? []), ...(tr.secondary ?? [])]
+  if (Array.isArray(tr?.seniorities) && tr!.seniorities.length) return tr!.seniorities
   return []
 }
 
@@ -57,14 +56,8 @@ function SegmentForm({
 }) {
   const industries = icpIndustries(icp)
   const geos = icpGeo(icp)
-  const titles = icpTitles(icp)
-  const hasSegmentData = industries.length > 0 || geos.length > 0 || titles.length > 0
-
-  function toggleRole(role: string) {
-    const current = segment.roles ?? []
-    const next = current.includes(role) ? current.filter(r => r !== role) : [...current, role]
-    onSegmentChange({ ...segment, roles: next })
-  }
+  const seniorities = icpSeniorities(icp)
+  const hasSegmentData = industries.length > 0 || geos.length > 0 || seniorities.length > 0
 
   return (
     <div className="space-y-3">
@@ -125,22 +118,19 @@ function SegmentForm({
             </div>
           )}
 
-          {titles.length > 0 && (
+          {seniorities.length > 0 && (
             <div>
-              <p className="text-[10px] uppercase tracking-widest text-zinc-400 font-medium mb-1.5">Roles</p>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-400 font-medium mb-1.5">Seniority</p>
               <div className="flex flex-wrap gap-1">
-                {titles.map(role => {
-                  const checked = (segment.roles ?? []).includes(role)
-                  return (
-                    <button
-                      key={role}
-                      onClick={() => toggleRole(role)}
-                      className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${checked ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
-                    >
-                      {role}
-                    </button>
-                  )
-                })}
+                {seniorities.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => onSegmentChange({ ...segment, seniority: segment.seniority === s ? undefined : s })}
+                    className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${segment.seniority === s ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+                  >
+                    {s}
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -151,12 +141,9 @@ function SegmentForm({
 }
 
 function isSegmentComplete(icp: IcpRaw, segment: Partial<TargetSegment>): boolean {
-  const needsIndustry = icpIndustries(icp).length > 0
-  const needsGeo = icpGeo(icp).length > 0
-  const needsRoles = icpTitles(icp).length > 0
-  if (needsIndustry && !segment.industry) return false
-  if (needsGeo && !segment.geo) return false
-  if (needsRoles && (!segment.roles || segment.roles.length === 0)) return false
+  if (icpIndustries(icp).length > 0 && !segment.industry) return false
+  if (icpGeo(icp).length > 0 && !segment.geo) return false
+  if (icpSeniorities(icp).length > 0 && !segment.seniority) return false
   return true
 }
 
@@ -212,8 +199,8 @@ export function IterationSelector({
               </span>
               <span className={it.status === 'discarded' ? 'line-through decoration-rose-300' : ''}>{it.name}</span>
               {it.target_segment && (
-                <span className={`text-[10px] ${isActive ? 'text-zinc-400' : 'text-zinc-400'}`}>
-                  {[it.target_segment.industry, it.target_segment.geo].filter(Boolean).join(' · ')}
+                <span className="text-[10px] text-zinc-400">
+                  {[it.target_segment.industry, it.target_segment.geo, it.target_segment.seniority].filter(Boolean).join(' · ')}
                 </span>
               )}
             </button>
@@ -240,7 +227,7 @@ export function FirstIterationPrompt({ projectId, icp }: { projectId: string; ic
 
   function create() {
     const seg = icp && isSegmentComplete(raw, segment)
-      ? { industry: segment.industry!, geo: segment.geo!, roles: segment.roles! }
+      ? { industry: segment.industry!, geo: segment.geo!, seniority: segment.seniority! }
       : undefined
     startTransition(async () => {
       const created = await createIteration(projectId, channel, seg)
@@ -311,7 +298,7 @@ function NewIterationButton({
 
   function create() {
     const seg = icp && isSegmentComplete(raw, segment)
-      ? { industry: segment.industry!, geo: segment.geo!, roles: segment.roles! }
+      ? { industry: segment.industry!, geo: segment.geo!, seniority: segment.seniority! }
       : undefined
     setOpen(false)
     startTransition(async () => {
