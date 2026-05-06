@@ -28,11 +28,11 @@ export function SignInForm({ next }: { next: string }) {
   const router = useRouter()
   const [step, setStep] = useState<'email' | 'code'>('email')
   const [email, setEmail] = useState('')
-  const [digits, setDigits] = useState<string[]>(Array(8).fill(''))
+  const [digits, setDigits] = useState<string[]>(Array(6).fill(''))
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
   const [resendCooldown, setResendCooldown] = useState(0)
-  const digitRefs = useRef<Array<HTMLInputElement | null>>(Array(8).fill(null))
+  const digitRefs = useRef<Array<HTMLInputElement | null>>(Array(6).fill(null))
   const code = digits.join('')
 
   // Restore cooldown across page reloads / step navigation
@@ -106,7 +106,7 @@ export function SignInForm({ next }: { next: string }) {
       })
       if (error) {
         setError('Invalid or expired code. Try again.')
-        setDigits(Array(8).fill(''))
+        setDigits(Array(6).fill(''))
         setTimeout(() => digitRefs.current[0]?.focus(), 50)
         return
       }
@@ -119,7 +119,7 @@ export function SignInForm({ next }: { next: string }) {
   // Auto-submit when all 6 digits filled — useEffect ensures verifyOtp captures fresh email state
   useEffect(() => {
     const full = digits.join('')
-    if (full.length === 8 && digits.every(d => d !== '')) {
+    if (full.length === 6 && digits.every(d => d !== '')) {
       verifyOtp(full)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,28 +130,28 @@ export function SignInForm({ next }: { next: string }) {
     const next = [...digits]
     next[index] = digit
     setDigits(next)
-    if (digit && index < 7) digitRefs.current[index + 1]?.focus()
+    if (digit && index < 5) digitRefs.current[index + 1]?.focus()
   }
 
   function handleDigitKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Backspace' && !digits[index] && index > 0) digitRefs.current[index - 1]?.focus()
     if (e.key === 'ArrowLeft' && index > 0) digitRefs.current[index - 1]?.focus()
-    if (e.key === 'ArrowRight' && index < 7) digitRefs.current[index + 1]?.focus()
+    if (e.key === 'ArrowRight' && index < 5) digitRefs.current[index + 1]?.focus()
   }
 
   function handleDigitPaste(e: React.ClipboardEvent) {
     e.preventDefault()
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 8)
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
     if (!pasted) return
-    const next = Array(8).fill('')
+    const next = Array(6).fill('')
     pasted.split('').forEach((ch, i) => { next[i] = ch })
     setDigits(next)
-    digitRefs.current[Math.min(pasted.length, 7)]?.focus()
+    digitRefs.current[Math.min(pasted.length, 5)]?.focus()
   }
 
   function handleCodeSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (code.length >= 8) verifyOtp(code)
+    if (code.length >= 6) verifyOtp(code)
   }
 
   return (
@@ -231,7 +231,7 @@ export function SignInForm({ next }: { next: string }) {
           >
             <button
               type="button"
-              onClick={() => { setStep('email'); setError(null); setDigits(Array(8).fill('')) }}
+              onClick={() => { setStep('email'); setError(null); setDigits(Array(6).fill('')) }}
               className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-800 transition-colors"
             >
               <ArrowLeft size={12} />
@@ -271,7 +271,7 @@ export function SignInForm({ next }: { next: string }) {
 
             <button
               type="submit"
-              disabled={pending || code.length < 8}
+              disabled={pending || code.length < 6}
               className="w-full flex items-center justify-center gap-2 rounded-lg bg-zinc-900 text-white text-sm font-medium py-2.5 hover:bg-zinc-700 disabled:opacity-50 transition-colors"
             >
               {pending && <Loader2 size={14} className="animate-spin" />}
