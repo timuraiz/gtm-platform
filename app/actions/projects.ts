@@ -6,7 +6,7 @@ import { createClient as createSupabase } from '@/utils/supabase/server'
 
 export type IcpJson = {
   industries: string[]
-  titles: string[]
+  seniority_levels: string[]
   geo: string[]
   pain_points: string[]
 }

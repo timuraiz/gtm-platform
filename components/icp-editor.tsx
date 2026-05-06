@@ -7,6 +7,11 @@ import { updateProjectIcp, updateProjectOffer } from '@/app/actions/projects'
 import { scaleIn, springGentle } from '@/lib/animations'
 
 const FUNDING_ROUNDS = ['Pre-Seed', 'Seed', 'Series A', 'Series B', 'Series C+']
+const SENIORITY_OPTIONS = ['C-Suite', 'VP', 'Director', 'Head of', 'Manager', 'Senior IC']
+const SENIORITY_TO_APOLLO: Record<string, string> = {
+  'C-Suite': 'c_suite', 'VP': 'vp', 'Director': 'director',
+  'Head of': 'director', 'Manager': 'manager', 'Senior IC': 'senior',
+}
 const EMPLOYEE_RANGES = [
   { label: '1–10', value: '1,10' },
   { label: '11–50', value: '11,50' },
@@ -149,10 +154,11 @@ function readIndustries(icp: IcpRaw): string[] {
   return []
 }
 
-function readTitles(icp: IcpRaw): string[] {
-  if (Array.isArray(icp.titles) && icp.titles.length) return icp.titles as string[]
+function readSeniorities(icp: IcpRaw): string[] {
+  if (Array.isArray(icp.seniority_levels) && icp.seniority_levels.length) return icp.seniority_levels as string[]
+  // migrate legacy target_roles.seniorities
   const tr = icp.target_roles as Record<string, string[]> | undefined
-  if (tr) return [...(tr.primary ?? []), ...(tr.secondary ?? [])]
+  if (Array.isArray(tr?.seniorities)) return tr!.seniorities
   return []
 }
 
@@ -186,7 +192,7 @@ export function IcpEditor({
   const [offer, setOffer] = useState(offerText ?? '')
   const [geo, setGeo] = useState<string[]>(readGeo(raw))
   const [industries, setIndustries] = useState<string[]>(readIndustries(raw))
-  const [titles, setTitles] = useState<string[]>(readTitles(raw))
+  const [seniorities, setSeniorities] = useState<string[]>(readSeniorities(raw))
   const [keywords, setKeywords] = useState<string[]>(readKeywords(raw))
   const [exclusions, setExclusions] = useState<string[]>((raw.exclusions as string[]) ?? [])
   const [fundingRounds, setFundingRounds] = useState<string[]>((raw.funding_rounds as string[]) ?? [])
@@ -197,7 +203,7 @@ export function IcpEditor({
     setOffer(offerText ?? '')
     setGeo(readGeo(raw))
     setIndustries(readIndustries(raw))
-    setTitles(readTitles(raw))
+    setSeniorities(readSeniorities(raw))
     setKeywords(readKeywords(raw))
     setExclusions((raw.exclusions as string[]) ?? [])
     setFundingRounds((raw.funding_rounds as string[]) ?? [])
@@ -209,19 +215,15 @@ export function IcpEditor({
   async function save() {
     setSaving(true)
     try {
+      const apolloSeniorities = seniorities.map(s => SENIORITY_TO_APOLLO[s]).filter(Boolean)
       const merged: IcpRaw = {
         ...raw,
         geo,
         industries,
-        titles,
+        seniority_levels: seniorities,
         funding_rounds: fundingRounds,
         employee_ranges: employeeRanges,
         trigger: trigger || undefined,
-        target_roles: {
-          ...(raw.target_roles as object ?? {}),
-          primary: titles.slice(0, 3),
-          secondary: titles.slice(3),
-        },
         segments: keywords.length > 0 ? [{ name: 'main', keywords }] : [],
         exclusions,
         apollo_filters: {
@@ -229,8 +231,12 @@ export function IcpEditor({
           locations: geo,
           industries,
           employee_ranges: employeeRanges,
+          person_seniorities: apolloSeniorities,
         },
       }
+      // remove legacy fields
+      delete merged.titles
+      delete merged.target_roles
       await updateProjectIcp(projectId, merged)
       setEditing(false)
     } finally {
@@ -238,7 +244,7 @@ export function IcpEditor({
     }
   }
 
-  const hasContent = geo.length || industries.length || titles.length || keywords.length || fundingRounds.length || trigger
+  const hasContent = geo.length || industries.length || seniorities.length || keywords.length || fundingRounds.length || trigger
 
   return (
     <div className="rounded-2xl border border-zinc-100 bg-white overflow-hidden">
@@ -301,7 +307,7 @@ export function IcpEditor({
 
             <TagInput label="Geography" values={geo} onChange={setGeo} placeholder="United States" color="green" />
             <TagInput label="Industries" values={industries} onChange={setIndustries} placeholder="B2B SaaS" color="blue" />
-            <TagInput label="Target roles" values={titles} onChange={setTitles} placeholder="CEO, Founder, CMO…" color="purple" />
+            <PillSelector label="Seniority" options={SENIORITY_OPTIONS} selected={seniorities} onChange={setSeniorities} />
             <div>
               <TagInput label="Apollo keywords" values={keywords} onChange={setKeywords} placeholder="fintech app, developer tools" color="orange" />
               <p className="text-[10px] text-zinc-400 mt-1">Search phrases used by Apollo. Pick product/industry words ("fintech app", "B2B SaaS"), avoid fundraising language.</p>
@@ -370,11 +376,11 @@ export function IcpEditor({
                 </div>
               </div>
             )}
-            {titles.length > 0 && (
+            {seniorities.length > 0 && (
               <div>
-                <p className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1.5">Target roles</p>
+                <p className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1.5">Seniority</p>
                 <div className="flex flex-wrap gap-1">
-                  {titles.map(t => <span key={t} className="rounded-full bg-purple-50 text-purple-700 px-2.5 py-0.5 text-xs">{t}</span>)}
+                  {seniorities.map(s => <span key={s} className="rounded-full bg-purple-50 text-purple-700 px-2.5 py-0.5 text-xs">{s}</span>)}
                 </div>
               </div>
             )}

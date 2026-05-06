@@ -34,8 +34,11 @@ function icpIndustries(icp: IcpRaw): string[] {
   return []
 }
 function icpSeniorities(icp: IcpRaw): string[] {
+  if (Array.isArray(icp.seniority_levels) && (icp.seniority_levels as string[]).length)
+    return icp.seniority_levels as string[]
+  // legacy fallback
   const tr = icp.target_roles as Record<string, string[]> | undefined
-  if (Array.isArray(tr?.seniorities) && tr!.seniorities.length) return tr!.seniorities
+  if (Array.isArray(tr?.seniorities)) return tr!.seniorities
   return []
 }
 

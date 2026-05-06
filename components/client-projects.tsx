@@ -51,7 +51,7 @@ function ProjectCard({ project, clientId, fresh }: { project: Project; clientId:
         {project.icp_json && (
           <div className="space-y-2">
             <IcpTags items={project.icp_json.industries ?? []} color="bg-blue-50 text-blue-700" />
-            <IcpTags items={project.icp_json.titles ?? []} color="bg-purple-50 text-purple-700" />
+            <IcpTags items={project.icp_json.seniority_levels ?? []} color="bg-purple-50 text-purple-700" />
             <IcpTags items={project.icp_json.geo ?? []} color="bg-green-50 text-green-700" />
           </div>
         )}

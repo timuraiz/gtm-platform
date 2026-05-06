@@ -65,14 +65,14 @@ async function apolloCompanySearch(filters: ApolloFilters, keyword: string) {
   return res.json()
 }
 
-async function apolloPeopleSearch(domain: string, titles: string[]) {
+async function apolloPeopleSearch(domain: string, seniorities: string[]) {
   const key = process.env.APOLLO_API_KEY!
   const res = await fetch(`${APOLLO_BASE}/mixed_people/search`, {
     method: 'POST',
     headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       q_organization_domains: [domain],
-      person_titles: titles,
+      person_seniorities: seniorities,
       page: 1,
       per_page: 10,
     }),
@@ -264,14 +264,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
         // ── Step 6: Extract people ─────────────────────────────────────────
         emit({ step: 'extract_people', status: 'running', total: targets.length })
         const allContacts: Contact[] = []
-        // People search always uses project ICP roles — seniority is for filtering/analytics only
-        const primaryTitles = icp.target_roles?.primary ?? []
-        const secondaryTitles = icp.target_roles?.secondary ?? []
-        const searchTitles = [...primaryTitles, ...secondaryTitles].slice(0, 5)
+        // People search uses Apollo seniority filter from ICP
+        const icpSeniorities = (project.icp_json as Record<string, unknown> | null)?.apollo_filters as Record<string, unknown> | undefined
+        const searchSeniorities: string[] = (icpSeniorities?.person_seniorities as string[] | undefined) ?? []
 
         await Promise.allSettled(targets.slice(0, 15).map(async (company) => {
           try {
-            const data = await apolloPeopleSearch(company.domain, searchTitles)
+            const data = await apolloPeopleSearch(company.domain, searchSeniorities)
             for (const p of (data.people ?? []) as Record<string, unknown>[]) {
               const linkedin = (p.linkedin_url as string | null) ?? ''
               if (!linkedin && !p.email) continue
