@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState } from 'react'
 import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useChat } from '@ai-sdk/react'
 import { isToolUIPart, isReasoningUIPart, getToolName, DefaultChatTransport, type UIMessage } from 'ai'
 import { useRouter } from 'next/navigation'
@@ -594,6 +595,7 @@ export function Message({ message, userEmail }: { message: UIMessage; userEmail?
                 }`}
               >
                 <Markdown
+                  remarkPlugins={[remarkGfm]}
                   components={{
                     p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
                     strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
