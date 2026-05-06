@@ -559,7 +559,7 @@ async function stepExtractPeople(
       }
       const deduped = rows.filter(r => !r.email || !existingEmails.has(r.email as string))
       if (deduped.length > 0) {
-        await supabase.from('contacts').upsert(deduped, { onConflict: 'project_id,linkedin_url', ignoreDuplicates: true })
+        await supabase.from('contacts').upsert(deduped, { onConflict: 'iteration_id,linkedin_url', ignoreDuplicates: true })
       }
     }
     const { count } = await supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('project_id', projectId)

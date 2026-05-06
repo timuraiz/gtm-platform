@@ -308,7 +308,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
               linkedin_url: c.linkedin_url!, email: c.email,
               first_name: c.first_name, last_name: c.last_name, title: c.title, apollo_data: c.apollo_data,
             })),
-            { onConflict: 'project_id,linkedin_url' },
+            { onConflict: 'iteration_id,linkedin_url' },
           )
         }
 

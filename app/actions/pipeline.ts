@@ -190,7 +190,7 @@ export async function uploadContacts(
   if (toInsert.length > 0) {
     const { error, count } = await supabase
       .from('contacts')
-      .upsert(toInsert, { onConflict: 'project_id,linkedin_url', ignoreDuplicates: true, count: 'exact' })
+      .upsert(toInsert, { onConflict: 'iteration_id,linkedin_url', ignoreDuplicates: true, count: 'exact' })
     if (error) throw new Error(error.message)
     inserted = count ?? toInsert.length
     skipped += toInsert.length - inserted

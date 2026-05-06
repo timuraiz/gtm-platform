@@ -604,7 +604,7 @@ export async function POST(req: Request) {
           }
           const deduped = rows.filter(r => !r.email || !existingEmails.has(r.email))
           if (deduped.length > 0) {
-            await supabase.from('contacts').upsert(deduped, { onConflict: 'project_id,linkedin_url', ignoreDuplicates: true })
+            await supabase.from('contacts').upsert(deduped, { onConflict: 'iteration_id,linkedin_url', ignoreDuplicates: true })
           }
         }
       }
