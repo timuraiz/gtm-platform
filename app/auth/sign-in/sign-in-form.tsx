@@ -248,7 +248,7 @@ export function SignInForm({ next }: { next: string }) {
               </p>
             </div>
 
-            <div className="flex gap-2" onPaste={handleDigitPaste}>
+            <div className="flex gap-2 justify-between" onPaste={handleDigitPaste}>
               {digits.map((d, i) => (
                 <input
                   key={i}
@@ -260,7 +260,7 @@ export function SignInForm({ next }: { next: string }) {
                   disabled={pending}
                   onChange={e => handleDigitChange(i, e.target.value)}
                   onKeyDown={e => handleDigitKeyDown(i, e)}
-                  className="flex-1 h-14 text-center text-xl font-semibold text-zinc-900 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900 disabled:opacity-50 transition-all tabular-nums caret-transparent"
+                  className="w-11 h-12 text-center text-lg font-semibold text-zinc-900 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900 disabled:opacity-50 transition-all tabular-nums caret-transparent"
                 />
               ))}
             </div>
