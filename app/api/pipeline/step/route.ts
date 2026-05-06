@@ -52,6 +52,26 @@ async function scrape(url: string) {
 
 type TargetSegment = { industry: string; geo: string; seniority: string }
 
+// Mirrors components/icp-editor.tsx SENIORITY_TO_APOLLO. The user-facing label
+// stored on iterations.target_segment.seniority is one of these keys; Apollo
+// expects the value side.
+const SENIORITY_LABEL_TO_APOLLO: Record<string, string> = {
+  'C-Suite': 'c_suite',
+  'VP': 'vp',
+  'Director': 'director',
+  'Head of': 'director',
+  'Manager': 'manager',
+  'Senior IC': 'senior',
+}
+
+function resolveSeniorityToApollo(label: string): string | null {
+  if (!label) return null
+  if (SENIORITY_LABEL_TO_APOLLO[label]) return SENIORITY_LABEL_TO_APOLLO[label]
+  // Tolerant fallback for free-form values: "C-Suite" → "c_suite", "VP" → "vp".
+  const norm = label.toLowerCase().replace(/[-\s]+/g, '_').replace(/[^a-z_]/g, '')
+  return norm || null
+}
+
 async function runGenerateFilters(icp: unknown, targetSegment?: TargetSegment | null) {
   const skill = await fetchSkill('apollo-filter-mapping')
   const segmentNote = targetSegment
@@ -286,12 +306,15 @@ async function runExtractPeople(
     throw new Error('ICP has no seniority or title filters — set "Seniority" in the ICP editor first')
   }
 
-  // If iteration has a specific seniority, narrow to just that Apollo value
+  // If the iteration explicitly scoped to one seniority (e.g. "C-Suite"), use ONLY
+  // that mapped Apollo value. No fallback to other levels — the user said this
+  // iteration targets that slice, pulling VPs/Directors anyway defeats targeting.
+  // Without an iteration override, fall back to the project-level ICP list.
+  const iterationApolloSeniority = targetSegment?.seniority
+    ? resolveSeniorityToApollo(targetSegment.seniority)
+    : null
   const effectiveSeniorities = useSeniorities
-    ? (targetSegment?.seniority
-        ? seniorities.filter(s => s.toLowerCase().includes(targetSegment.seniority.toLowerCase().split(' ')[0]))
-            .concat(seniorities).slice(0, 3) // prefer matching, include rest as fallback
-        : seniorities)
+    ? (iterationApolloSeniority ? [iterationApolloSeniority] : seniorities)
     : []
 
   const domainLimit = scout ? 3 : 25
@@ -383,6 +406,13 @@ async function runExtractPeople(
     domains_total: targetDomains.length,
     has_more: nextOffset < targetDomains.length,
     next_offset: nextOffset,
+    // Audit trail: which Apollo filters were actually used for this extract.
+    // Helpful for verifying iteration target_segment was honored.
+    filters_applied: {
+      seniorities: useSeniorities ? effectiveSeniorities : null,
+      titles: useSeniorities ? null : titles,
+      iteration_seniority: targetSegment?.seniority ?? null,
+    },
     ...(searchErrors.length ? { search_errors: searchErrors } : {}),
   }
 }
