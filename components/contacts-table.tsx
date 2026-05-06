@@ -224,10 +224,11 @@ export function ContactsTable({
             {canUpload && (
               <button
                 onClick={() => setShowUpload(true)}
+                title="Append rows from a CSV. Duplicates (same LinkedIn URL) are skipped."
                 className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors"
               >
                 <Upload size={13} />
-                Upload CSV
+                Append CSV
               </button>
             )}
             <button

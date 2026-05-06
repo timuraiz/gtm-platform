@@ -129,7 +129,7 @@ export function UploadCompaniesModal({
           <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
             <div>
               <h2 className="text-base font-semibold text-zinc-900">Upload companies</h2>
-              <p className="text-xs text-zinc-400 mt-0.5">CSV with header row · companies attach to this project</p>
+              <p className="text-xs text-zinc-400 mt-0.5">CSV with header row · appended to this project · duplicates (same domain) skipped</p>
             </div>
             <button onClick={onClose} className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-50">
               <X size={16} />
