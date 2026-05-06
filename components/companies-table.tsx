@@ -79,37 +79,40 @@ export function CompaniesTable({
     })
   }
 
-  async function handleDetach() {
-    if (selected.size === 0) return
+  async function handleDetach(idsArg?: string[]) {
+    const ids = idsArg ?? Array.from(selected)
+    if (ids.length === 0) return
     setBusy(true)
     try {
-      const ids = Array.from(selected)
+      const idSet = new Set(ids)
       await detachCompanies(projectId, ids)
-      setCompanies(prev => prev.filter(c => !selected.has(c.id)))
+      setCompanies(prev => prev.filter(c => !idSet.has(c.id)))
       setSelected(new Set())
       router.refresh()
     } finally { setBusy(false) }
   }
 
-  async function handleRescrape() {
-    if (selected.size === 0) return
+  async function handleRescrape(idsArg?: string[]) {
+    const ids = idsArg ?? Array.from(selected)
+    if (ids.length === 0) return
     setBusy(true)
     try {
-      const domains = companies.filter(c => selected.has(c.id)).map(c => c.domain)
+      const idSet = new Set(ids)
+      const domains = companies.filter(c => idSet.has(c.id)).map(c => c.domain)
       await rescrapeNow(domains)
       const now = new Date().toISOString()
-      setCompanies(prev => prev.map(c => selected.has(c.id) ? { ...c, scraped_at: now } : c))
+      setCompanies(prev => prev.map(c => idSet.has(c.id) ? { ...c, scraped_at: now } : c))
       setSelected(new Set())
       router.refresh()
     } finally { setBusy(false) }
   }
 
-  async function handleClassify() {
-    if (selected.size === 0) return
+  async function handleClassify(idsArg?: string[]) {
+    const ids = idsArg ?? Array.from(selected)
+    if (ids.length === 0) return
     setClassifyRunning(true)
     setClassifyResult(null)
     try {
-      const ids = Array.from(selected)
       const res = await classifyCompanies(projectId, ids)
       setClassifyResult(res)
       setSelected(new Set())
@@ -119,9 +122,12 @@ export function CompaniesTable({
     } finally { setClassifyRunning(false) }
   }
 
-  async function handleExtractPeople() {
-    if (!iterationId || selected.size === 0) return
-    const domains = companies.filter(c => selected.has(c.id)).map(c => c.domain)
+  async function handleExtractPeople(idsArg?: string[]) {
+    if (!iterationId) return
+    const ids = idsArg ?? Array.from(selected)
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const domains = companies.filter(c => idSet.has(c.id)).map(c => c.domain)
     setExtractRunning(true)
     setExtractResult(null)
     try {
@@ -140,6 +146,24 @@ export function CompaniesTable({
     } finally {
       setExtractRunning(false)
     }
+  }
+
+  // Operate on the entire current filtered set (uses the filter tabs to scope).
+  function bulkIds(): string[] {
+    return filtered.map(c => c.id)
+  }
+  async function bulkDelete() {
+    const ids = bulkIds()
+    if (ids.length === 0) return
+    if (!confirm(`Remove ${ids.length} companies from this project?`)) return
+    await handleDetach(ids)
+  }
+  async function bulkScrape() {
+    await handleRescrape(bulkIds())
+  }
+  async function bulkExtract() {
+    if (!iterationId) { alert('Select an iteration first'); return }
+    await handleExtractPeople(bulkIds())
   }
 
   if (companies.length === 0) {
@@ -207,7 +231,7 @@ export function CompaniesTable({
         {selected.size > 0 && (
           <>
             <button
-              onClick={handleExtractPeople}
+              onClick={() => handleExtractPeople()}
               disabled={extractRunning || !iterationId}
               title={!iterationId ? 'Create or select an iteration first' : `Extract people from ${selected.size} companies`}
               className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-zinc-900 text-white hover:bg-zinc-700 disabled:opacity-50 transition-colors"
@@ -218,7 +242,7 @@ export function CompaniesTable({
               Extract people ({selected.size})
             </button>
             <button
-              onClick={handleClassify}
+              onClick={() => handleClassify()}
               disabled={classifyRunning || busy}
               title="Run Claude classifier against the project ICP"
               className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 transition-colors"
@@ -229,7 +253,7 @@ export function CompaniesTable({
               Classify ({selected.size})
             </button>
             <button
-              onClick={handleRescrape}
+              onClick={() => handleRescrape()}
               disabled={busy}
               title="Scrape websites now and update scraped_at"
               className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 transition-colors"
@@ -238,7 +262,7 @@ export function CompaniesTable({
               Re-scrape
             </button>
             <button
-              onClick={handleDetach}
+              onClick={() => handleDetach()}
               disabled={busy}
               className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50 transition-colors"
             >
@@ -248,14 +272,51 @@ export function CompaniesTable({
           </>
         )}
 
-        <button
-          onClick={() => setShowUpload(true)}
-          title="Append rows from a CSV. Duplicates (same domain in this project) are skipped."
-          className="ml-auto flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors"
-        >
-          <Upload size={13} />
-          Append CSV
-        </button>
+        <div className="ml-auto flex items-center gap-1.5 flex-wrap">
+          {filtered.length > 0 && selected.size === 0 && (
+            <>
+              <button
+                onClick={bulkScrape}
+                disabled={busy}
+                title={`Re-scrape ${filtered.length} ${filter === 'all' ? '' : filter} compan${filtered.length === 1 ? 'y' : 'ies'}`}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 transition-colors"
+              >
+                {busy
+                  ? <span className="size-3.5 rounded-full border-2 border-zinc-300 border-t-zinc-600 animate-spin" />
+                  : <RefreshCw size={13} />}
+                Scrape all ({filtered.length})
+              </button>
+              <button
+                onClick={bulkExtract}
+                disabled={extractRunning || !iterationId}
+                title={!iterationId ? 'Select an iteration first' : `Extract people from ${filtered.length} ${filter === 'all' ? '' : filter} compan${filtered.length === 1 ? 'y' : 'ies'}`}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-zinc-900 text-white hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+              >
+                {extractRunning
+                  ? <span className="size-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  : <Users size={13} />}
+                Extract from all ({filtered.length})
+              </button>
+              <button
+                onClick={bulkDelete}
+                disabled={busy}
+                title={`Remove ${filtered.length} ${filter === 'all' ? '' : filter} compan${filtered.length === 1 ? 'y' : 'ies'} from this project`}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50 transition-colors"
+              >
+                <Trash2 size={13} />
+                Delete all ({filtered.length})
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setShowUpload(true)}
+            title="Append rows from a CSV. Duplicates (same domain in this project) are skipped."
+            className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors"
+          >
+            <Upload size={13} />
+            Append CSV
+          </button>
+        </div>
       </div>
 
       {extractResult && (
