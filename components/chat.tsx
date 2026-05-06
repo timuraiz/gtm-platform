@@ -598,11 +598,21 @@ export function Message({ message, userEmail }: { message: UIMessage; userEmail?
                     p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
                     strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
                     em: ({ children }) => <em className="italic">{children}</em>,
-                    hr: () => <hr className="my-2 border-zinc-200 dark:border-zinc-700" />,
+                    hr: () => <hr className="my-2 border-zinc-200" />,
                     ul: ({ children }) => <ul className="list-disc pl-4 space-y-0.5 mb-1">{children}</ul>,
                     ol: ({ children }) => <ol className="list-decimal pl-4 space-y-0.5 mb-1">{children}</ol>,
                     li: ({ children }) => <li>{children}</li>,
                     code: ({ children }) => <code className="bg-black/10 rounded px-1 font-mono text-xs">{children}</code>,
+                    table: ({ children }) => (
+                      <div className="my-2 -mx-1 overflow-x-auto">
+                        <table className="w-full text-xs border-collapse rounded-xl overflow-hidden border border-zinc-200">{children}</table>
+                      </div>
+                    ),
+                    thead: ({ children }) => <thead className="bg-zinc-50">{children}</thead>,
+                    tbody: ({ children }) => <tbody className="divide-y divide-zinc-100">{children}</tbody>,
+                    tr: ({ children }) => <tr className="hover:bg-zinc-50/60 transition-colors">{children}</tr>,
+                    th: ({ children }) => <th className="px-3 py-2 text-left font-medium text-zinc-500 uppercase tracking-wide text-[10px] border-b border-zinc-200 whitespace-nowrap">{children}</th>,
+                    td: ({ children }) => <td className="px-3 py-2 text-zinc-800 tabular-nums whitespace-nowrap">{children}</td>,
                   }}
                 >
                   {part.text}
