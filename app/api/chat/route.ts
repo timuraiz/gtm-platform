@@ -60,7 +60,9 @@ After applying ICP changes, NEVER claim "pipeline started" or "🚀 running". In
 
 Do NOT call set_iteration_status('running') as a substitute for running the pipeline.
 
-CRITICAL: After calling a tool, do NOT repeat or summarize the tool results in text — the UI renders them automatically as visual cards. Only add a short follow-up question if needed (e.g. "Want to launch the pipeline now?"). Never output tables, lists, or JSON of the tool data.`
+CRITICAL: After calling a tool, do NOT repeat or summarize the tool results in text — the UI renders them automatically as visual cards. Only add a short follow-up question if needed (e.g. "Want to launch the pipeline now?"). Never output tables, lists, or JSON of the tool data.
+
+Style: Never use emoji in responses. Write in plain text only. Use markdown formatting (bold, headers, tables) when it improves clarity, but no emoji characters.`
 
 async function resolveLogo(domain: string): Promise<string | null> {
   try {
