@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useTransition } from 'react'
+import { useState, useRef, useEffect, useTransition, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -28,11 +28,12 @@ export function SignInForm({ next }: { next: string }) {
   const router = useRouter()
   const [step, setStep] = useState<'email' | 'code'>('email')
   const [email, setEmail] = useState('')
-  const [code, setCode] = useState('')
+  const [digits, setDigits] = useState<string[]>(Array(6).fill(''))
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
   const [resendCooldown, setResendCooldown] = useState(0)
-  const codeInputRef = useRef<HTMLInputElement | null>(null)
+  const digitRefs = useRef<Array<HTMLInputElement | null>>(Array(6).fill(null))
+  const code = digits.join('')
 
   // Restore cooldown across page reloads / step navigation
   useEffect(() => {
@@ -46,7 +47,7 @@ export function SignInForm({ next }: { next: string }) {
   }, [])
 
   useEffect(() => {
-    if (step === 'code') setTimeout(() => codeInputRef.current?.focus(), 100)
+    if (step === 'code') setTimeout(() => digitRefs.current[0]?.focus(), 100)
   }, [step])
 
   useEffect(() => {
@@ -105,8 +106,8 @@ export function SignInForm({ next }: { next: string }) {
       })
       if (error) {
         setError('Invalid or expired code. Try again.')
-        setCode('')
-        codeInputRef.current?.focus()
+        setDigits(Array(6).fill(''))
+        setTimeout(() => digitRefs.current[0]?.focus(), 50)
         return
       }
       if (typeof window !== 'undefined') window.localStorage.removeItem(COOLDOWN_KEY)
@@ -115,10 +116,41 @@ export function SignInForm({ next }: { next: string }) {
     })
   }
 
-  function handleCodeChange(val: string) {
-    const sanitized = val.replace(/\D/g, '').slice(0, 10)
-    setCode(sanitized)
-  }
+  const handleDigitChange = useCallback((index: number, val: string) => {
+    const digit = val.replace(/\D/g, '').slice(-1)
+    setDigits(prev => {
+      const next = [...prev]
+      next[index] = digit
+      if (digit && index === 5) {
+        const full = next.join('')
+        if (full.length === 6) setTimeout(() => verifyOtp(full), 0)
+      }
+      return next
+    })
+    if (digit && index < 5) {
+      digitRefs.current[index + 1]?.focus()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDigitKeyDown = useCallback((index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !digits[index] && index > 0) {
+      digitRefs.current[index - 1]?.focus()
+    }
+    if (e.key === 'ArrowLeft' && index > 0) digitRefs.current[index - 1]?.focus()
+    if (e.key === 'ArrowRight' && index < 5) digitRefs.current[index + 1]?.focus()
+  }, [digits])
+
+  const handleDigitPaste = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault()
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
+    if (!pasted) return
+    const next = Array(6).fill('')
+    pasted.split('').forEach((ch, i) => { next[i] = ch })
+    setDigits(next)
+    const focusIdx = Math.min(pasted.length, 5)
+    digitRefs.current[focusIdx]?.focus()
+    if (pasted.length === 6) verifyOtp(pasted)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleCodeSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -202,7 +234,7 @@ export function SignInForm({ next }: { next: string }) {
           >
             <button
               type="button"
-              onClick={() => { setStep('email'); setError(null); setCode('') }}
+              onClick={() => { setStep('email'); setError(null); setDigits(Array(6).fill('')) }}
               className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-800 transition-colors"
             >
               <ArrowLeft size={12} />
@@ -216,16 +248,22 @@ export function SignInForm({ next }: { next: string }) {
               </p>
             </div>
 
-            <input
-              ref={codeInputRef}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={code}
-              onChange={e => handleCodeChange(e.target.value)}
-              placeholder="••••••"
-              disabled={pending}
-              className="w-full text-center text-2xl font-semibold tracking-[0.4em] text-zinc-900 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 disabled:opacity-50 transition-colors tabular-nums py-3 placeholder:tracking-normal placeholder:text-zinc-300"
-            />
+            <div className="flex gap-2" onPaste={handleDigitPaste}>
+              {digits.map((d, i) => (
+                <input
+                  key={i}
+                  ref={el => { digitRefs.current[i] = el }}
+                  inputMode="numeric"
+                  autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                  maxLength={1}
+                  value={d}
+                  disabled={pending}
+                  onChange={e => handleDigitChange(i, e.target.value)}
+                  onKeyDown={e => handleDigitKeyDown(i, e)}
+                  className="flex-1 h-14 text-center text-xl font-semibold text-zinc-900 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900 disabled:opacity-50 transition-all tabular-nums caret-transparent"
+                />
+              ))}
+            </div>
 
             {error && (
               <div className="flex items-start gap-2 rounded-lg bg-red-50 text-red-700 px-3 py-2 text-xs">
