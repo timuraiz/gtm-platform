@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { Search, Upload, Trash2, RefreshCw, Users, ListChecks, ChevronLeft, ChevronRight } from 'lucide-react'
 import { type ProjectCompany, detachCompanies, rescrapeNow, classifyCompanies } from '@/app/actions/companies'
@@ -303,7 +304,12 @@ export function CompaniesTable({
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={c.qualification_status} />
+                    <StatusBadge
+                      status={c.qualification_status}
+                      reasoning={c.reasoning}
+                      segment={c.segment}
+                      confidence={c.confidence}
+                    />
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-medium px-2 py-0.5 rounded ${
@@ -349,12 +355,87 @@ export function CompaniesTable({
   )
 }
 
-function StatusBadge({ status }: { status: 'qualified' | 'rejected' | 'unknown' }) {
-  if (status === 'qualified') {
-    return <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">✓ Qualified</span>
+function StatusBadge({
+  status,
+  reasoning,
+  segment,
+  confidence,
+}: {
+  status: 'qualified' | 'rejected' | 'unknown'
+  reasoning?: string | null
+  segment?: string | null
+  confidence?: number | null
+}) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLSpanElement>(null)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function show() {
+    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null }
+    setOpen(true)
   }
-  if (status === 'rejected') {
-    return <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600">✗ Rejected</span>
+  function hide() {
+    if (closeTimer.current) clearTimeout(closeTimer.current)
+    closeTimer.current = setTimeout(() => setOpen(false), 120)
   }
-  return <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500">Unknown</span>
+
+  const label =
+    status === 'qualified' ? '✓ Qualified' :
+    status === 'rejected' ? '✗ Rejected' : 'Unknown'
+  const cls =
+    status === 'qualified' ? 'bg-emerald-50 text-emerald-700' :
+    status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-zinc-100 text-zinc-500'
+
+  const hasContext = !!(reasoning || segment || (confidence != null))
+
+  return (
+    <span
+      ref={wrapRef}
+      className="relative inline-block"
+      onMouseEnter={hasContext ? show : undefined}
+      onMouseLeave={hasContext ? hide : undefined}
+    >
+      <span
+        className={`text-xs font-medium px-2 py-0.5 rounded-full ${cls} ${hasContext ? 'cursor-help' : ''}`}
+      >
+        {label}
+      </span>
+
+      <AnimatePresence>
+        {open && hasContext && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+            onMouseEnter={show}
+            onMouseLeave={hide}
+            className="absolute left-0 top-full mt-1.5 z-30 w-80 rounded-xl border border-zinc-100 bg-white shadow-lg p-3 text-left"
+          >
+            {(segment || confidence != null) && (
+              <div className="flex items-center gap-2 mb-2">
+                {segment && (
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 rounded px-1.5 py-0.5">
+                    {segment}
+                  </span>
+                )}
+                {confidence != null && (
+                  <span className="text-[10px] text-zinc-400 tabular-nums">
+                    confidence {confidence}%
+                  </span>
+                )}
+              </div>
+            )}
+            {reasoning ? (
+              <p className="text-xs text-zinc-600 leading-relaxed whitespace-pre-line">
+                {reasoning}
+              </p>
+            ) : (
+              <p className="text-xs text-zinc-400 italic">No classifier note recorded.</p>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </span>
+  )
 }
