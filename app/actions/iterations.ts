@@ -7,6 +7,12 @@ export type IterationStatus = 'draft' | 'running' | 'finished' | 'discarded'
 
 export type IterationChannel = 'linkedin' | 'email'
 
+export type TargetSegment = {
+  industry: string
+  geo: string
+  roles: string[]
+}
+
 export type Iteration = {
   id: string
   project_id: string
@@ -18,6 +24,7 @@ export type Iteration = {
   finished_at: string | null
   stats: IterationMetrics | null
   stats_uploaded_at: string | null
+  target_segment: TargetSegment | null
 }
 
 export type IterationMetrics = {
@@ -38,7 +45,11 @@ export async function getIterations(projectId: string): Promise<Iteration[]> {
   return (data ?? []) as Iteration[]
 }
 
-export async function createIteration(projectId: string, channel: IterationChannel = 'linkedin'): Promise<Iteration> {
+export async function createIteration(
+  projectId: string,
+  channel: IterationChannel = 'linkedin',
+  targetSegment?: TargetSegment,
+): Promise<Iteration> {
   const supabase = await createClient()
   const { count } = await supabase
     .from('iterations')
@@ -48,7 +59,7 @@ export async function createIteration(projectId: string, channel: IterationChann
 
   const { data, error } = await supabase
     .from('iterations')
-    .insert({ project_id: projectId, name: finalName, channel })
+    .insert({ project_id: projectId, name: finalName, channel, target_segment: targetSegment ?? null })
     .select('*')
     .single()
   if (error) throw new Error(error.message)

@@ -78,11 +78,11 @@ export default async function ProjectPage({
       </div>
 
       {!activeIteration ? (
-        <FirstIterationPrompt projectId={projectId} />
+        <FirstIterationPrompt projectId={projectId} icp={project.icp_json as Record<string, unknown> | null} />
       ) : (
         <>
           {/* Iterations + tabs — fixed in document position, no sticky */}
-          <IterationSelector iterations={iterations} activeId={activeIteration.id} projectId={projectId} />
+          <IterationSelector iterations={iterations} activeId={activeIteration.id} projectId={projectId} icp={project.icp_json as Record<string, unknown> | null} />
           <div className="border-b border-zinc-100 mb-6 flex gap-1">
             {([
               { key: 'pipeline', label: 'Pipeline' },

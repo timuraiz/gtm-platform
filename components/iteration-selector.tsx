@@ -3,7 +3,7 @@
 import { useState, useTransition, useRef, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, Layers, ChevronDown, Check, Circle, Play, CircleCheck, CircleSlash, Mail } from 'lucide-react'
-import { createIteration, setIterationStatus, type Iteration, type IterationStatus, type IterationChannel } from '@/app/actions/iterations'
+import { createIteration, setIterationStatus, type Iteration, type IterationStatus, type IterationChannel, type TargetSegment } from '@/app/actions/iterations'
 import { ChannelIcon } from './channel-icon'
 
 const STATUSES: { key: IterationStatus; label: string; tone: string; dot: string; icon: typeof Circle }[] = [
@@ -17,14 +17,161 @@ function statusMeta(s: IterationStatus) {
   return STATUSES.find(x => x.key === s)!
 }
 
+// ─── ICP helpers ─────────────────────────────────────────────────────────────
+
+type IcpRaw = Record<string, unknown>
+
+function icpGeo(icp: IcpRaw): string[] {
+  if (Array.isArray(icp.geo) && icp.geo.length) return icp.geo as string[]
+  const af = icp.apollo_filters as IcpRaw | undefined
+  if (Array.isArray(af?.locations)) return af!.locations as string[]
+  return []
+}
+function icpIndustries(icp: IcpRaw): string[] {
+  if (Array.isArray(icp.industries) && icp.industries.length) return icp.industries as string[]
+  const af = icp.apollo_filters as IcpRaw | undefined
+  if (Array.isArray(af?.industries)) return af!.industries as string[]
+  return []
+}
+function icpTitles(icp: IcpRaw): string[] {
+  if (Array.isArray(icp.titles) && icp.titles.length) return icp.titles as string[]
+  const tr = icp.target_roles as Record<string, string[]> | undefined
+  if (tr) return [...(tr.primary ?? []), ...(tr.secondary ?? [])]
+  return []
+}
+
+// ─── Segment form ─────────────────────────────────────────────────────────────
+
+function SegmentForm({
+  icp,
+  channel,
+  onChannelChange,
+  segment,
+  onSegmentChange,
+}: {
+  icp: IcpRaw
+  channel: IterationChannel
+  onChannelChange: (c: IterationChannel) => void
+  segment: Partial<TargetSegment>
+  onSegmentChange: (s: Partial<TargetSegment>) => void
+}) {
+  const industries = icpIndustries(icp)
+  const geos = icpGeo(icp)
+  const titles = icpTitles(icp)
+  const hasSegmentData = industries.length > 0 || geos.length > 0 || titles.length > 0
+
+  function toggleRole(role: string) {
+    const current = segment.roles ?? []
+    const next = current.includes(role) ? current.filter(r => r !== role) : [...current, role]
+    onSegmentChange({ ...segment, roles: next })
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Channel */}
+      <div>
+        <p className="text-[10px] uppercase tracking-widest text-zinc-400 font-medium mb-1.5">Channel</p>
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => onChannelChange('linkedin')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${channel === 'linkedin' ? 'bg-blue-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+          >
+            <ChannelIcon channel="linkedin" size={11} />
+            LinkedIn
+          </button>
+          <button
+            onClick={() => onChannelChange('email')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${channel === 'email' ? 'bg-orange-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+          >
+            <Mail size={11} />
+            Email
+          </button>
+        </div>
+      </div>
+
+      {hasSegmentData && (
+        <>
+          {industries.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-400 font-medium mb-1.5">Industry</p>
+              <div className="flex flex-wrap gap-1">
+                {industries.map(ind => (
+                  <button
+                    key={ind}
+                    onClick={() => onSegmentChange({ ...segment, industry: segment.industry === ind ? undefined : ind })}
+                    className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${segment.industry === ind ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+                  >
+                    {ind}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {geos.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-400 font-medium mb-1.5">Region</p>
+              <div className="flex flex-wrap gap-1">
+                {geos.map(geo => (
+                  <button
+                    key={geo}
+                    onClick={() => onSegmentChange({ ...segment, geo: segment.geo === geo ? undefined : geo })}
+                    className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${segment.geo === geo ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+                  >
+                    {geo}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {titles.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-400 font-medium mb-1.5">Roles</p>
+              <div className="flex flex-wrap gap-1">
+                {titles.map(role => {
+                  const checked = (segment.roles ?? []).includes(role)
+                  return (
+                    <button
+                      key={role}
+                      onClick={() => toggleRole(role)}
+                      className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${checked ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+                    >
+                      {role}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function isSegmentComplete(icp: IcpRaw, segment: Partial<TargetSegment>): boolean {
+  const needsIndustry = icpIndustries(icp).length > 0
+  const needsGeo = icpGeo(icp).length > 0
+  const needsRoles = icpTitles(icp).length > 0
+  if (needsIndustry && !segment.industry) return false
+  if (needsGeo && !segment.geo) return false
+  if (needsRoles && (!segment.roles || segment.roles.length === 0)) return false
+  return true
+}
+
+// ─── IterationSelector ────────────────────────────────────────────────────────
+
 export function IterationSelector({
   iterations,
   activeId,
   projectId,
+  icp,
 }: {
   iterations: Iteration[]
   activeId: string
   projectId: string
+  icp: IcpRaw | null
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -53,7 +200,7 @@ export function IterationSelector({
             <button
               key={it.id}
               onClick={() => switchTo(it.id)}
-              title={`${it.channel === 'linkedin' ? 'LinkedIn' : 'Email'} · ${meta.label}`}
+              title={`${it.channel === 'linkedin' ? 'LinkedIn' : 'Email'} · ${meta.label}${it.target_segment ? ` · ${it.target_segment.industry ?? ''} ${it.target_segment.geo ?? ''}`.trim() : ''}`}
               className={`flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${isActive
                   ? 'bg-zinc-900 text-white'
                   : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
@@ -64,24 +211,39 @@ export function IterationSelector({
                 {it.channel === 'linkedin' ? <ChannelIcon channel="linkedin" size={10} /> : <Mail size={10} />}
               </span>
               <span className={it.status === 'discarded' ? 'line-through decoration-rose-300' : ''}>{it.name}</span>
+              {it.target_segment && (
+                <span className={`text-[10px] ${isActive ? 'text-zinc-400' : 'text-zinc-400'}`}>
+                  {[it.target_segment.industry, it.target_segment.geo].filter(Boolean).join(' · ')}
+                </span>
+              )}
             </button>
           )
         })}
-        <NewIterationButton projectId={projectId} onCreated={switchTo} disabled={pending} />
+        <NewIterationButton projectId={projectId} icp={icp} onCreated={switchTo} disabled={pending} />
       </div>
       {active && <StatusDropdown iteration={active} />}
     </div>
   )
 }
 
-export function FirstIterationPrompt({ projectId }: { projectId: string }) {
+// ─── FirstIterationPrompt ─────────────────────────────────────────────────────
+
+export function FirstIterationPrompt({ projectId, icp }: { projectId: string; icp: IcpRaw | null }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [pending, startTransition] = useTransition()
+  const [channel, setChannel] = useState<IterationChannel>('linkedin')
+  const [segment, setSegment] = useState<Partial<TargetSegment>>({})
 
-  function pick(channel: IterationChannel) {
+  const raw = icp ?? {}
+  const ready = !icp || isSegmentComplete(raw, segment)
+
+  function create() {
+    const seg = icp && isSegmentComplete(raw, segment)
+      ? { industry: segment.industry!, geo: segment.geo!, roles: segment.roles! }
+      : undefined
     startTransition(async () => {
-      const created = await createIteration(projectId, channel)
+      const created = await createIteration(projectId, channel, seg)
       const params = new URLSearchParams(Array.from(searchParams.entries()))
       params.set('iter', created.id)
       router.push(`?${params.toString()}`, { scroll: false })
@@ -89,48 +251,55 @@ export function FirstIterationPrompt({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="rounded-2xl border border-zinc-100 bg-white p-10 text-center max-w-xl mx-auto">
-      <div className="flex items-center justify-center mb-3">
+    <div className="rounded-2xl border border-zinc-100 bg-white p-8 max-w-lg mx-auto">
+      <div className="flex items-center justify-center mb-4">
         <span className="size-8 rounded-xl bg-zinc-100 flex items-center justify-center">
           <Layers size={14} className="text-zinc-500" strokeWidth={2.25} />
         </span>
       </div>
-      <h2 className="text-base font-semibold text-zinc-900">Pick a channel for your first iteration</h2>
-      <p className="text-xs text-zinc-500 mt-1">Each iteration runs on a single channel — LinkedIn or Email. Stats and sequences inside stay on that channel.</p>
-      <div className="mt-5 flex items-center justify-center gap-2">
-        <button
-          onClick={() => pick('linkedin')}
-          disabled={pending}
-          className="flex items-center gap-2 rounded-full bg-blue-600 text-white text-xs font-medium px-4 py-2 hover:bg-blue-700 disabled:opacity-50 transition-colors"
-        >
-          <ChannelIcon channel="linkedin" size={12} />
-          Start LinkedIn iteration
-        </button>
-        <button
-          onClick={() => pick('email')}
-          disabled={pending}
-          className="flex items-center gap-2 rounded-full bg-orange-600 text-white text-xs font-medium px-4 py-2 hover:bg-orange-700 disabled:opacity-50 transition-colors"
-        >
-          <Mail size={12} />
-          Start Email iteration
-        </button>
-      </div>
+      <h2 className="text-base font-semibold text-zinc-900 text-center mb-1">Create your first iteration</h2>
+      <p className="text-xs text-zinc-500 text-center mb-6">Pick a channel and define the target segment for clean analytics.</p>
+
+      <SegmentForm
+        icp={raw}
+        channel={channel}
+        onChannelChange={setChannel}
+        segment={segment}
+        onSegmentChange={setSegment}
+      />
+
+      <button
+        onClick={create}
+        disabled={pending || !ready}
+        className="mt-5 w-full flex items-center justify-center gap-2 rounded-full bg-zinc-900 text-white text-xs font-medium px-4 py-2.5 hover:bg-zinc-700 disabled:opacity-40 transition-colors"
+      >
+        {pending ? 'Creating…' : 'Create iteration'}
+      </button>
     </div>
   )
 }
 
+// ─── NewIterationButton ───────────────────────────────────────────────────────
+
 function NewIterationButton({
   projectId,
+  icp,
   onCreated,
   disabled,
 }: {
   projectId: string
+  icp: IcpRaw | null
   onCreated: (id: string) => void
   disabled: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [pending, startTransition] = useTransition()
+  const [channel, setChannel] = useState<IterationChannel>('linkedin')
+  const [segment, setSegment] = useState<Partial<TargetSegment>>({})
   const ref = useRef<HTMLDivElement>(null)
+
+  const raw = icp ?? {}
+  const ready = !icp || isSegmentComplete(raw, segment)
 
   useEffect(() => {
     function onMouseDown(e: MouseEvent) {
@@ -140,10 +309,13 @@ function NewIterationButton({
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [open])
 
-  function pick(channel: IterationChannel) {
+  function create() {
+    const seg = icp && isSegmentComplete(raw, segment)
+      ? { industry: segment.industry!, geo: segment.geo!, roles: segment.roles! }
+      : undefined
     setOpen(false)
     startTransition(async () => {
-      const created = await createIteration(projectId, channel)
+      const created = await createIteration(projectId, channel, seg)
       onCreated(created.id)
     })
   }
@@ -151,7 +323,7 @@ function NewIterationButton({
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => { setOpen(o => !o); setSegment({}) }}
         disabled={disabled || pending}
         className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium border border-dashed border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-600 transition-colors disabled:opacity-50"
       >
@@ -159,27 +331,28 @@ function NewIterationButton({
         New
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1.5 z-30 w-52 rounded-xl border border-zinc-100 bg-white shadow-lg overflow-hidden">
-          <p className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-zinc-400 font-medium">Pick a channel</p>
+        <div className="absolute left-0 top-full mt-1.5 z-30 w-72 rounded-xl border border-zinc-100 bg-white shadow-lg p-3 space-y-3">
+          <SegmentForm
+            icp={raw}
+            channel={channel}
+            onChannelChange={setChannel}
+            segment={segment}
+            onSegmentChange={setSegment}
+          />
           <button
-            onClick={() => pick('linkedin')}
-            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-blue-700 hover:bg-blue-50 transition-colors"
+            onClick={create}
+            disabled={!ready || pending}
+            className="w-full flex items-center justify-center rounded-lg bg-zinc-900 text-white text-xs font-medium py-2 hover:bg-zinc-700 disabled:opacity-40 transition-colors"
           >
-            <ChannelIcon channel="linkedin" size={12} />
-            <span className="flex-1 text-left">LinkedIn iteration</span>
-          </button>
-          <button
-            onClick={() => pick('email')}
-            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-orange-700 hover:bg-orange-50 transition-colors"
-          >
-            <Mail size={12} />
-            <span className="flex-1 text-left">Email iteration</span>
+            {pending ? 'Creating…' : 'Create iteration'}
           </button>
         </div>
       )}
     </div>
   )
 }
+
+// ─── StatusDropdown ───────────────────────────────────────────────────────────
 
 function StatusDropdown({ iteration }: { iteration: Iteration }) {
   const router = useRouter()

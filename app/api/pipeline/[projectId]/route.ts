@@ -110,6 +110,8 @@ async function saveStep(db: ReturnType<typeof supabase>, runId: string, steps: S
 
 export async function GET(_req: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params
+  const url = new URL(_req.url)
+  const iterationId = url.searchParams.get('iterationId')
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -121,6 +123,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
         const { data: project } = await db.from('projects').select('*').eq('id', projectId).single()
         if (!project) throw new Error('Project not found')
 
+        // Load iteration's target_segment if provided
+        type TargetSegment = { industry: string; geo: string; roles: string[] }
+        let targetSegment: TargetSegment | null = null
+        if (iterationId) {
+          const { data: iter } = await db.from('iterations').select('target_segment').eq('id', iterationId).single()
+          targetSegment = (iter?.target_segment as TargetSegment | null) ?? null
+        }
+
         const { data: run } = await db
           .from('pipeline_runs').insert({ project_id: projectId, status: 'running' }).select('id').single()
         const runId = run?.id as string
@@ -129,9 +139,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
         // ── Step 1: Extract ICP ────────────────────────────────────────────
         emit({ step: 'extract_icp', status: 'running' })
         const offerSkill = await fetchSkill('offer-extraction')
+        const segmentContext = targetSegment
+          ? `\nTarget segment for this run: industry="${targetSegment.industry}", geo="${targetSegment.geo}", roles=${JSON.stringify(targetSegment.roles)}. Narrow the ICP to this segment.`
+          : ''
         const icpRaw = await callClaude(
           offerSkill,
-          `Extract ICP for this offer/project:\nName: ${project.name}\nOffer: ${project.offer_text ?? ''}\nExisting ICP: ${JSON.stringify(project.icp_json ?? {})}`,
+          `Extract ICP for this offer/project:\nName: ${project.name}\nOffer: ${project.offer_text ?? ''}\nExisting ICP: ${JSON.stringify(project.icp_json ?? {})}${segmentContext}`,
         )
         const icp: IcpResult = JSON.parse(icpRaw)
         steps.push({ name: 'extract_icp', status: 'done', artifact: icp })
@@ -147,6 +160,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
           generatedFilters.employee_ranges = [icp.apollo_filters.employee_range]
         if (!generatedFilters.locations?.length && icp.apollo_filters?.locations?.length)
           generatedFilters.locations = icp.apollo_filters.locations
+        // Segment overrides: narrow to exact geo + add industry as keyword
+        if (targetSegment?.geo) generatedFilters.locations = [targetSegment.geo]
+        if (targetSegment?.industry && !generatedFilters.keywords?.includes(targetSegment.industry))
+          generatedFilters.keywords = [targetSegment.industry, ...(generatedFilters.keywords ?? [])]
         steps.push({ name: 'generate_filters', status: 'done', artifact: generatedFilters })
         await saveStep(db, runId, steps)
         emit({ step: 'generate_filters', status: 'done', artifact: generatedFilters })
@@ -206,7 +223,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
           const batch = toScrape.slice(i, i + BATCH)
           const payload = batch.map(c => ({ domain: c.domain, name: c.name, website_text: (c.scraped_text ?? '').slice(0, 2000) }))
           try {
-            const raw = await callClaude(qualSkill, `Offer: ${icp.primary_offer ?? project.offer_text ?? ''}\nICP: ${JSON.stringify(icp.target_roles ?? {})}\n\nClassify each company. Return JSON array:\n[{"domain":"...","is_target":bool,"confidence":0-100,"segment":"LABEL","reasoning":"..."}]\n\nCompanies:\n${JSON.stringify(payload)}`)
+            const classifyContext = targetSegment
+              ? `Offer: ${icp.primary_offer ?? project.offer_text ?? ''}\nTarget segment: industry="${targetSegment.industry}", geo="${targetSegment.geo}", roles=${JSON.stringify(targetSegment.roles)}`
+              : `Offer: ${icp.primary_offer ?? project.offer_text ?? ''}\nICP: ${JSON.stringify(icp.target_roles ?? {})}`
+            const raw = await callClaude(qualSkill, `${classifyContext}\n\nClassify each company. Return JSON array:\n[{"domain":"...","is_target":bool,"confidence":0-100,"segment":"LABEL","reasoning":"..."}]\n\nCompanies:\n${JSON.stringify(payload)}`)
             const results = JSON.parse(raw) as typeof classifyResults
             for (const r of results) {
               const company = batch.find(c => c.domain === r.domain)
@@ -244,8 +264,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
         // ── Step 6: Extract people ─────────────────────────────────────────
         emit({ step: 'extract_people', status: 'running', total: targets.length })
         const allContacts: Contact[] = []
-        const primaryTitles = icp.target_roles?.primary ?? []
-        const secondaryTitles = icp.target_roles?.secondary ?? []
+        // Use iteration's roles if available, otherwise fall back to project ICP
+        const primaryTitles = targetSegment?.roles ?? icp.target_roles?.primary ?? []
+        const secondaryTitles = targetSegment ? [] : (icp.target_roles?.secondary ?? [])
         const searchTitles = [...primaryTitles, ...secondaryTitles].slice(0, 5)
 
         await Promise.allSettled(targets.slice(0, 15).map(async (company) => {
