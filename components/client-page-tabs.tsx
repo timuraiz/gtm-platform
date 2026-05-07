@@ -5,12 +5,14 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { type Project } from '@/app/actions/projects'
 import { type CaseStudy } from '@/app/actions/clients'
 import { type ClientStats } from '@/app/actions/iterations'
+import { type BlacklistEntry } from '@/app/actions/blacklist'
 import { ClientProjects } from './client-projects'
 import { CaseStudiesPanel } from './case-studies-panel'
 import { ClientStatsPanel } from './client-stats-panel'
+import { BlacklistPanel } from './blacklist-panel'
 import { fadeUp, springGentle } from '@/lib/animations'
 
-type Tab = 'projects' | 'stats' | 'social_proof'
+type Tab = 'projects' | 'stats' | 'social_proof' | 'blacklist'
 
 export function ClientPageTabs({
   clientId,
@@ -21,6 +23,7 @@ export function ClientPageTabs({
   stats,
   statsRange,
   statsProjectIds,
+  blacklist,
 }: {
   clientId: string
   websiteUrl: string | null
@@ -30,6 +33,7 @@ export function ClientPageTabs({
   stats: ClientStats
   statsRange: { from: string | null; to: string | null }
   statsProjectIds: string[]
+  blacklist: BlacklistEntry[]
 }) {
   const [tab, setTab] = useState<Tab>('projects')
 
@@ -39,6 +43,7 @@ export function ClientPageTabs({
     { id: 'projects', label: 'Projects', count: projects.length },
     { id: 'stats', label: 'Stats', count: totalIterations || undefined },
     { id: 'social_proof', label: 'Social Proof', count: caseStudies.length || undefined },
+    { id: 'blacklist', label: 'Blacklist', count: blacklist.length || undefined },
   ]
 
   return (
@@ -115,6 +120,19 @@ export function ClientPageTabs({
               initialCaseStudies={caseStudies}
               scrapedAt={caseStudiesScrapedAt}
             />
+          </motion.div>
+        )}
+
+        {tab === 'blacklist' && (
+          <motion.div
+            key="blacklist"
+            variants={fadeUp}
+            initial="hidden"
+            animate="show"
+            exit={{ opacity: 0, transition: { duration: 0.1 } }}
+            transition={springGentle}
+          >
+            <BlacklistPanel clientId={clientId} initialEntries={blacklist} />
           </motion.div>
         )}
       </AnimatePresence>

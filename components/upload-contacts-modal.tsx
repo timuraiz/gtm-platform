@@ -69,7 +69,7 @@ export function UploadContactsModal({
   const [mapping, setMapping] = useState<Record<FieldKey, number | null> | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ inserted: number; skipped: number } | null>(null)
+  const [result, setResult] = useState<{ inserted: number; skipped: number; blacklisted: number } | null>(null)
 
   const customColumns = useMemo(() => {
     if (!parsed || !mapping) return []
@@ -273,6 +273,9 @@ export function UploadContactsModal({
                 </p>
                 {result.skipped > 0 && (
                   <p className="text-xs text-zinc-400">{result.skipped} skipped (duplicates)</p>
+                )}
+                {result.blacklisted > 0 && (
+                  <p className="text-xs text-zinc-400">{result.blacklisted} skipped (blacklisted)</p>
                 )}
               </div>
             )}

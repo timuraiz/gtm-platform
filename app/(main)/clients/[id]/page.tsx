@@ -2,9 +2,11 @@ import { redirect } from 'next/navigation'
 import { getClient, getClientShareToken } from '@/app/actions/clients'
 import { getProjects } from '@/app/actions/projects'
 import { getClientStats } from '@/app/actions/iterations'
+import { getBlacklist } from '@/app/actions/blacklist'
 import { ClientLogo } from '@/components/client-logo'
 import { ClientPageTabs } from '@/components/client-page-tabs'
 import { ShareReportButton } from '@/components/share-report-button'
+import { ClientArchiveButton } from '@/components/client-archive-button'
 
 export default async function ClientPage({
   params,
@@ -16,13 +18,14 @@ export default async function ClientPage({
   const { id } = await params
   const { from, to, projects: projectsParam } = await searchParams
   const selectedProjectIds = projectsParam ? projectsParam.split(',').filter(Boolean) : null
-  let client, projects, stats, shareToken
+  let client, projects, stats, shareToken, blacklist
   try {
-    ;[client, projects, stats, shareToken] = await Promise.all([
+    ;[client, projects, stats, shareToken, blacklist] = await Promise.all([
       getClient(id),
       getProjects(id),
       getClientStats(id, from ?? null, to ?? null, selectedProjectIds),
       getClientShareToken(id),
+      getBlacklist(id),
     ])
   } catch {
     redirect('/')
@@ -33,7 +36,14 @@ export default async function ClientPage({
       <div className="mb-8 flex items-center gap-3">
         <ClientLogo name={client!.name} logoUrl={client!.logo_url ?? null} size="lg" />
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-semibold text-zinc-900">{client!.name}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold text-zinc-900">{client!.name}</h1>
+            {client!.archived_at && (
+              <span className="text-[11px] uppercase tracking-wider text-zinc-400 border border-zinc-200 rounded px-1.5 py-0.5">
+                Archived
+              </span>
+            )}
+          </div>
           {client!.website_url && (
             <a
               href={client!.website_url}
@@ -46,6 +56,7 @@ export default async function ClientPage({
           )}
         </div>
         {shareToken && <ShareReportButton token={shareToken} />}
+        <ClientArchiveButton clientId={id} archived={!!client!.archived_at} />
       </div>
 
       <ClientPageTabs
@@ -57,6 +68,7 @@ export default async function ClientPage({
         stats={stats!}
         statsRange={{ from: from ?? null, to: to ?? null }}
         statsProjectIds={selectedProjectIds ?? []}
+        blacklist={blacklist!}
       />
     </div>
   )

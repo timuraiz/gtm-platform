@@ -2,6 +2,8 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
+import { getBlacklistMatchSets, getClientIdForProject } from './blacklist'
+import { isBlacklisted } from '@/lib/blacklist'
 
 export type StepRecord = {
   name: string
@@ -130,17 +132,30 @@ export async function uploadContacts(
   projectId: string,
   iterationId: string,
   rows: UploadedContactRow[],
-): Promise<{ inserted: number; skipped: number }> {
-  if (rows.length === 0) return { inserted: 0, skipped: 0 }
+): Promise<{ inserted: number; skipped: number; blacklisted: number }> {
+  if (rows.length === 0) return { inserted: 0, skipped: 0, blacklisted: 0 }
   const supabase = await createClient()
 
+  // Filter out blacklisted contacts up-front so they never hit `contacts`.
+  const clientId = await getClientIdForProject(projectId)
+  let working = rows
+  let blacklisted = 0
+  if (clientId) {
+    const sets = await getBlacklistMatchSets(clientId)
+    if (sets.emails.size > 0 || sets.linkedinUrls.size > 0) {
+      working = rows.filter((r) => !isBlacklisted(sets, r.email, r.linkedin_url))
+      blacklisted = rows.length - working.length
+    }
+  }
+  if (working.length === 0) return { inserted: 0, skipped: 0, blacklisted }
+
   // Resolve / create companies by domain (global) + attach to project
-  const domains = [...new Set(rows.map(r => r.company_domain?.trim()).filter(Boolean) as string[])]
+  const domains = [...new Set(working.map(r => r.company_domain?.trim()).filter(Boolean) as string[])]
   const domainToCompanyId: Record<string, string> = {}
   if (domains.length > 0) {
     // Upsert into global companies — preserves existing metadata if present
     const newCompanies = domains.map(d => {
-      const sample = rows.find(r => r.company_domain?.trim() === d)
+      const sample = working.find(r => r.company_domain?.trim() === d)
       return { domain: d, name: sample?.company_name ?? d }
     })
     await supabase
@@ -170,7 +185,7 @@ export async function uploadContacts(
   let skipped = 0
   const seenLinkedin = new Set<string>()
   const toInsert: Record<string, unknown>[] = []
-  for (const r of rows) {
+  for (const r of working) {
     const li = r.linkedin_url?.trim() || `manual-${crypto.randomUUID()}`
     if (seenLinkedin.has(li)) { skipped++; continue }
     seenLinkedin.add(li)
@@ -197,7 +212,7 @@ export async function uploadContacts(
   }
 
   revalidatePath('.')
-  return { inserted, skipped }
+  return { inserted, skipped, blacklisted }
 }
 
 export async function forkPipelineRun(runId: string): Promise<string> {

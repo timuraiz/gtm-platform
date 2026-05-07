@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useTransition } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { LogOut, Users } from 'lucide-react'
+import { LogOut, Users, MoreHorizontal, Archive, ArchiveRestore } from 'lucide-react'
 import {
   DndContext,
   DragOverlay,
@@ -16,7 +16,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
-import { type Client } from '@/app/actions/clients'
+import { type Client, archiveClient, unarchiveClient } from '@/app/actions/clients'
 import { type Conversation, deleteConversation, linkConversationToClient } from '@/app/actions/conversations'
 import { ClientLogo } from './client-logo'
 import { CreateClientModal } from './create-client-modal'
@@ -72,6 +72,94 @@ function ConvItem({
   )
 }
 
+// ─── Hover menu on a client row (Archive / Unarchive) ────────────────────────
+
+function ClientRowMenu({
+  clientId,
+  archived,
+}: {
+  clientId: string
+  archived: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [pending, startTransition] = useTransition()
+  const router = useRouter()
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    if (open) document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [open])
+
+  function run(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    startTransition(async () => {
+      if (archived) await unarchiveClient(clientId)
+      else await archiveClient(clientId)
+      setOpen(false)
+      router.refresh()
+    })
+  }
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(o => !o) }}
+        className="opacity-0 group-hover:opacity-100 p-1 text-zinc-300 hover:text-zinc-600 transition-all rounded"
+        aria-label="Client actions"
+      >
+        <MoreHorizontal size={12} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-10 rounded-lg border border-zinc-100 bg-white shadow-lg overflow-hidden min-w-[120px]">
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={run}
+            disabled={pending}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-700 hover:bg-zinc-50 transition-colors text-left disabled:opacity-50"
+          >
+            {archived ? <ArchiveRestore size={12} className="text-zinc-400" /> : <Archive size={12} className="text-zinc-400" />}
+            {archived ? 'Unarchive' : 'Archive'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Archived client row (no drop zone, dimmed) ──────────────────────────────
+
+function ArchivedClientRow({
+  client,
+  pathname,
+}: {
+  client: Client
+  pathname: string
+}) {
+  const active = pathname.startsWith(`/clients/${client.id}`)
+  return (
+    <div className="group">
+      <Link
+        href={`/clients/${client.id}`}
+        className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors opacity-60 hover:opacity-100 ${
+          active
+            ? 'bg-zinc-100 text-zinc-900 font-medium'
+            : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900'
+        }`}
+      >
+        <ClientLogo name={client.name} logoUrl={client.logo_url ?? null} size="sm" />
+        <span className="truncate flex-1">{client.name}</span>
+        <ClientRowMenu clientId={client.id} archived />
+      </Link>
+    </div>
+  )
+}
+
 // ─── Droppable client drop zone ───────────────────────────────────────────────
 
 function ClientDropZone({
@@ -98,7 +186,7 @@ function ClientDropZone({
   return (
     <div
       ref={setNodeRef}
-      className={`rounded-lg transition-colors ${isOver ? 'bg-blue-50 ring-1 ring-blue-200' : ''}`}
+      className={`group rounded-lg transition-colors ${isOver ? 'bg-blue-50 ring-1 ring-blue-200' : ''}`}
     >
       <Link
         href={`/clients/${client.id}`}
@@ -119,6 +207,7 @@ function ClientDropZone({
             {open ? '▾' : '▸'}
           </button>
         )}
+        <ClientRowMenu clientId={client.id} archived={false} />
       </Link>
 
       <AnimatePresence initial={false}>
@@ -239,6 +328,7 @@ export function Sidebar({
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [overId, setOverId] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
+  const [archivedOpen, setArchivedOpen] = useState(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
@@ -296,6 +386,8 @@ export function Sidebar({
 
   const draggingConv = conversations.find((c) => c.id === draggingId)
   const unlinked = conversations.filter((c) => !c.client_id)
+  const activeClients = clients.filter((c) => !c.archived_at)
+  const archivedClients = clients.filter((c) => !!c.archived_at)
 
   return (
     <>
@@ -360,7 +452,7 @@ export function Sidebar({
                 </div>
 
                 <motion.div className="space-y-0.5" variants={staggerContainer} initial="hidden" animate="show">
-                  {clients.map((client) => {
+                  {activeClients.map((client) => {
                     const linked = conversations.filter((c) => c.client_id === client.id)
                     return (
                       <motion.div key={client.id} variants={fadeUp} transition={springGentle}>
@@ -375,6 +467,34 @@ export function Sidebar({
                     )
                   })}
                 </motion.div>
+
+                {archivedClients.length > 0 && (
+                  <div className="mt-2">
+                    <button
+                      onClick={() => setArchivedOpen((o) => !o)}
+                      className="w-full flex items-center justify-between px-2 py-1 text-[11px] font-medium text-zinc-400 uppercase tracking-wider hover:text-zinc-600 transition-colors"
+                    >
+                      <span>Archived ({archivedClients.length})</span>
+                      <span className="text-[10px]">{archivedOpen ? '▾' : '▸'}</span>
+                    </button>
+                    <AnimatePresence initial={false}>
+                      {archivedOpen && (
+                        <motion.div
+                          key="archived-list"
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.18 }}
+                          className="overflow-hidden space-y-0.5"
+                        >
+                          {archivedClients.map((client) => (
+                            <ArchivedClientRow key={client.id} client={client} pathname={pathname} />
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
               </div>
             </div>
 

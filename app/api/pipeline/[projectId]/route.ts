@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import Anthropic from '@anthropic-ai/sdk'
+import { isBlacklisted, normalizeBlacklistEmail, normalizeBlacklistLinkedin, type BlacklistMatchSets } from '@/lib/blacklist'
 
 const APOLLO_BASE = 'https://api.apollo.io/api/v1'
 
@@ -286,9 +287,28 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
           } catch { /* skip */ }
         }))
 
+        // Filter out client-blacklisted contacts before persisting / reporting.
+        const blacklistSets: BlacklistMatchSets = { emails: new Set(), linkedinUrls: new Set() }
+        if (project.client_id) {
+          const { data: bl } = await db
+            .from('contact_blacklist')
+            .select('email, linkedin_url')
+            .eq('client_id', project.client_id)
+          for (const row of bl ?? []) {
+            const e = normalizeBlacklistEmail((row as { email: string | null }).email)
+            const l = normalizeBlacklistLinkedin((row as { linkedin_url: string | null }).linkedin_url)
+            if (e) blacklistSets.emails.add(e)
+            if (l) blacklistSets.linkedinUrls.add(l)
+          }
+        }
+        const beforeBlacklist = allContacts.length
+        const keptContacts = allContacts.filter((c) => !isBlacklisted(blacklistSets, c.email ?? null, c.linkedin_url ?? null))
+        const blacklistedCount = beforeBlacklist - keptContacts.length
+
         const peopleArtifact = {
-          total: allContacts.length,
-          contacts: allContacts.map(c => ({
+          total: keptContacts.length,
+          blacklisted: blacklistedCount,
+          contacts: keptContacts.map(c => ({
             name: [c.first_name, c.last_name].filter(Boolean).join(' ') || '—',
             email: c.email, title: c.title, domain: c.domain, linkedin_url: c.linkedin_url,
           }))
@@ -298,12 +318,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
         emit({ step: 'extract_people', status: 'done', artifact: peopleArtifact })
 
         // save contacts
-        if (allContacts.length > 0) {
-          const domains = [...new Set(allContacts.map(c => c.domain))]
+        if (keptContacts.length > 0) {
+          const domains = [...new Set(keptContacts.map(c => c.domain))]
           const { data: dbCompanies } = await db.from('companies').select('id, domain').eq('project_id', projectId).in('domain', domains)
           const domainToId = Object.fromEntries((dbCompanies ?? []).map((c: { id: string; domain: string }) => [c.domain, c.id]))
           await db.from('contacts').upsert(
-            allContacts.filter(c => domainToId[c.domain]).map(c => ({
+            keptContacts.filter(c => domainToId[c.domain]).map(c => ({
               project_id: projectId, company_id: domainToId[c.domain],
               linkedin_url: c.linkedin_url!, email: c.email,
               first_name: c.first_name, last_name: c.last_name, title: c.title, apollo_data: c.apollo_data,
@@ -313,11 +333,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
         }
 
         await db.from('pipeline_runs').update({
-          status: 'done', companies_found: toScrape.length, contacts_found: allContacts.length,
+          status: 'done', companies_found: toScrape.length, contacts_found: keptContacts.length,
           updated_at: new Date().toISOString(),
         }).eq('id', runId)
 
-        emit({ step: 'done', companies: toScrape.length, targets: targets.length, contacts: allContacts.length, runId })
+        emit({ step: 'done', companies: toScrape.length, targets: targets.length, contacts: keptContacts.length, blacklisted: blacklistedCount, runId })
       } catch (err) {
         emit({ step: 'error', message: String(err) })
       } finally {

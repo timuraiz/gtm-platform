@@ -19,15 +19,18 @@ export type Client = {
   case_studies: CaseStudy[]
   case_studies_scraped_at: string | null
   created_at: string
+  archived_at: string | null
   projects?: { id: string }[]
 }
 
-export async function getClients(): Promise<Client[]> {
+export async function getClients(opts: { includeArchived?: boolean } = {}): Promise<Client[]> {
   const supabase = await createSupabase()
-  const { data, error } = await supabase
+  let query = supabase
     .from('clients')
     .select('*, projects(id)')
     .order('created_at', { ascending: false })
+  if (!opts.includeArchived) query = query.is('archived_at', null)
+  const { data, error } = await query
   if (error) throw new Error(error.message)
   return data as Client[]
 }
@@ -106,4 +109,26 @@ export async function saveCaseStudies(clientId: string, caseStudies: CaseStudy[]
   const supabase = await createSupabase()
   await supabase.from('clients').update({ case_studies: caseStudies }).eq('id', clientId)
   revalidatePath(`/clients/${clientId}`)
+}
+
+export async function archiveClient(id: string): Promise<void> {
+  const supabase = await createSupabase()
+  const { error } = await supabase
+    .from('clients')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+  revalidatePath('/')
+  revalidatePath(`/clients/${id}`)
+}
+
+export async function unarchiveClient(id: string): Promise<void> {
+  const supabase = await createSupabase()
+  const { error } = await supabase
+    .from('clients')
+    .update({ archived_at: null })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+  revalidatePath('/')
+  revalidatePath(`/clients/${id}`)
 }

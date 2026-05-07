@@ -7,7 +7,10 @@ import { createClient } from '@/utils/supabase/server'
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const [clients, conversations] = await Promise.all([getClients(), getConversations()])
+  const [clients, conversations] = await Promise.all([
+    getClients({ includeArchived: true }),
+    getConversations(),
+  ])
 
   return (
     <div className="flex h-screen bg-zinc-50 p-3 gap-3">
