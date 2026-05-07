@@ -200,7 +200,7 @@ export async function getClientStats(
     .select(`
       id, name, icp_json,
       iterations(
-        id, channel, status, started_at, stats,
+        id, channel, status, started_at, stats, target_segment,
         sequences(id, name, share_token, channel, status, steps)
       )
     `)
@@ -278,6 +278,7 @@ export async function getClientStats(
         status: IterationStatus
         started_at: string | null
         stats: IterationMetrics | null
+        target_segment: TargetSegment | null
         sequences: Array<{ id: string; name: string; share_token: string; channel: IterationChannel; status: string; steps: Array<{ subject?: string; content: string }> }>
       }>
     }
@@ -307,13 +308,26 @@ export async function getClientStats(
       // When a range is active, only include iterations launched within it
       if ((fromMs || toMs) && !inRange(it.started_at)) continue
 
-      // Industry / role aggregation per channel (each iteration credited to all targeted industries/roles)
+      // Industry aggregation: prefer the iteration's target_segment.industry (the actual
+      // narrow slice this iteration targeted). Fall back to project ICP industries only
+      // when target_segment is absent — but split the stats evenly across them so we
+      // don't double-count an iteration's leads_sent in the totals.
       const ch: 'linkedin' | 'email' = it.channel === 'email' ? 'email' : 'linkedin'
-      for (const ind of projIndustries) {
-        accumGroup(industryMap[ch], ind, it.stats)
-        accumGroup(projIndustryMap[ch], ind, it.stats)
+      const iterIndustry = it.target_segment?.industry?.trim()
+      if (iterIndustry) {
+        accumGroup(industryMap[ch], iterIndustry, it.stats)
+        accumGroup(projIndustryMap[ch], iterIndustry, it.stats)
+      } else if (projIndustries.length === 1) {
+        accumGroup(industryMap[ch], projIndustries[0], it.stats)
+        accumGroup(projIndustryMap[ch], projIndustries[0], it.stats)
       }
-      for (const role of projRoles) accumGroup(roleMap[ch], role, it.stats)
+      // If the iteration has no target_segment.industry and the project lists multiple
+      // industries, we don't know which one it actually targeted — skip rather than
+      // smear the stats across all of them (which is what produced identical rows).
+
+      // Roles: target_segment doesn't track role/title, only seniority. Without per-iteration
+      // role info we can't attribute accurately, so we skip role aggregation when ambiguous.
+      if (projRoles.length === 1) accumGroup(roleMap[ch], projRoles[0], it.stats)
 
       // Aggregate channel + project totals
       const channelBucket: 'linkedin' | 'email' = it.channel === 'email' ? 'email' : 'linkedin'
