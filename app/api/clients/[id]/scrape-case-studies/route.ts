@@ -43,8 +43,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params
   const supabase = await createClient()
 
-  const { data: client } = await supabase.from('clients').select('website_url').eq('id', id).single()
+  const { data: client } = await supabase.from('clients').select('website_url, case_studies').eq('id', id).single()
   if (!client?.website_url) return NextResponse.json({ error: 'No website URL' }, { status: 400 })
+
+  const manualEntries: unknown[] = Array.isArray(client.case_studies)
+    ? (client.case_studies as Array<{ manual?: boolean }>).filter(cs => cs.manual)
+    : []
 
   const mainHtml = await fetchPage(client.website_url)
   const caseLinks = findCaseStudyLinks(mainHtml, client.website_url)
@@ -53,8 +57,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const combined = [mainHtml, ...extraPages].filter(Boolean).join('\n\n---\n\n').slice(0, 24000)
 
   if (!combined.trim()) {
-    await supabase.from('clients').update({ case_studies: [], case_studies_scraped_at: new Date().toISOString() }).eq('id', id)
-    return NextResponse.json({ case_studies: [] })
+    await supabase.from('clients').update({ case_studies: manualEntries, case_studies_scraped_at: new Date().toISOString() }).eq('id', id)
+    return NextResponse.json({ case_studies: manualEntries })
   }
 
   const msg = await anthropic.messages.create({
@@ -86,10 +90,12 @@ ${combined}`,
     caseStudies = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? '[]')
   } catch { caseStudies = [] }
 
+  const merged = [...manualEntries, ...caseStudies]
+
   await supabase.from('clients').update({
-    case_studies: caseStudies,
+    case_studies: merged,
     case_studies_scraped_at: new Date().toISOString(),
   }).eq('id', id)
 
-  return NextResponse.json({ case_studies: caseStudies })
+  return NextResponse.json({ case_studies: merged })
 }
