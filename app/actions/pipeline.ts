@@ -127,7 +127,13 @@ export async function getIterationCustomColumns(projectId: string, iterationId: 
 export async function deleteContacts(ids: string[]): Promise<void> {
   if (ids.length === 0) return
   const supabase = await createClient()
-  await supabase.from('contacts').delete().in('id', ids)
+  // Same URL-length cap as detachCompanies — chunk to keep .in() short.
+  const CHUNK = 200
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK)
+    const { error } = await supabase.from('contacts').delete().in('id', slice)
+    if (error) throw new Error(error.message)
+  }
   revalidatePath('.')
 }
 

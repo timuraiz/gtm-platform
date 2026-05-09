@@ -194,11 +194,20 @@ export async function detachCompany(projectId: string, projectCompanyId: string)
 export async function detachCompanies(projectId: string, ids: string[]): Promise<void> {
   if (ids.length === 0) return
   const supabase = await createClient()
-  await supabase
-    .from('project_companies')
-    .delete()
-    .eq('project_id', projectId)
-    .in('id', ids)
+  // Supabase translates .in('id', ids) into a URL query param. With ~37 chars
+  // per UUID, a single delete of 1999 IDs blows past the gateway's URL limit
+  // and the request silently fails — UI removed them locally, server kept
+  // them, router.refresh repopulated. Chunk the delete to stay under the cap.
+  const CHUNK = 200
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK)
+    const { error } = await supabase
+      .from('project_companies')
+      .delete()
+      .eq('project_id', projectId)
+      .in('id', slice)
+    if (error) throw new Error(error.message)
+  }
   revalidatePath('.')
 }
 
