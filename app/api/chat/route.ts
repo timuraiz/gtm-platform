@@ -380,15 +380,23 @@ export async function POST(req: Request) {
       }),
 
       create_iteration: tool({
-        description: 'Create a new iteration in a project, choosing the channel',
+        description: 'Create a new iteration in a project. target_segment is required and must include industry, geo, and seniority — the pipeline (Apollo extract_people, classify) refuses to run without all three.',
         inputSchema: z.object({
           project_id: z.string(),
           channel: z.enum(['linkedin', 'email']).describe('Iteration channel — sequences inside will all be on this channel'),
+          target_segment: z.object({
+            industry: z.string().min(1),
+            geo: z.string().min(1),
+            seniority: z.string().min(1).describe('One of "C-Suite", "VP", "Director", "Head of", "Manager", "Senior IC"'),
+          }).describe('The narrow slice this iteration targets within the project ICP'),
         }),
-        execute: async ({ project_id, channel }) => {
+        execute: async ({ project_id, channel, target_segment }) => {
           const { count } = await supabase.from('iterations').select('id', { count: 'exact', head: true }).eq('project_id', project_id)
           const name = `Iteration #${(count ?? 0) + 1}`
-          const { data, error } = await supabase.from('iterations').insert({ project_id, name, channel }).select('*').single()
+          const { data, error } = await supabase
+            .from('iterations')
+            .insert({ project_id, name, channel, target_segment })
+            .select('*').single()
           if (error) return { error: error.message }
           bumpCache()
           return { iteration: data }

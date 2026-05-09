@@ -50,6 +50,14 @@ export async function createIteration(
   channel: IterationChannel = 'linkedin',
   targetSegment?: TargetSegment,
 ): Promise<Iteration> {
+  // Server-side guard so the iteration always has the three dimensions the
+  // pipeline needs (Apollo extract_people refuses to run without seniority,
+  // classify needs industry/geo to honor the iteration scope). The UI used
+  // to gate this on the ICP having the field, which let an AI-rewritten
+  // ICP without seniority_levels create iterations missing seniority.
+  if (!targetSegment || !targetSegment.industry || !targetSegment.geo || !targetSegment.seniority) {
+    throw new Error('Iteration target_segment requires industry, geo, and seniority')
+  }
   const supabase = await createClient()
   const { count } = await supabase
     .from('iterations')
@@ -59,7 +67,7 @@ export async function createIteration(
 
   const { data, error } = await supabase
     .from('iterations')
-    .insert({ project_id: projectId, name: finalName, channel, target_segment: targetSegment ?? null })
+    .insert({ project_id: projectId, name: finalName, channel, target_segment: targetSegment })
     .select('*')
     .single()
   if (error) throw new Error(error.message)

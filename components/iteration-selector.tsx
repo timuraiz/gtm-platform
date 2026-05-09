@@ -33,13 +33,20 @@ function icpIndustries(icp: IcpRaw): string[] {
   if (Array.isArray(af?.industries)) return af!.industries as string[]
   return []
 }
+// Mirrors SENIORITY_LABEL_TO_APOLLO in app/api/pipeline/step/route.ts. We
+// always need a seniority on the iteration — Apollo extract_people refuses
+// to run without one — so when the ICP is missing the field (e.g. AI
+// rewrote it and dropped seniority_levels), fall back to this canonical
+// list rather than letting the user create an incomplete iteration.
+const DEFAULT_SENIORITIES = ['C-Suite', 'VP', 'Director', 'Head of', 'Manager', 'Senior IC']
+
 function icpSeniorities(icp: IcpRaw): string[] {
   if (Array.isArray(icp.seniority_levels) && (icp.seniority_levels as string[]).length)
     return icp.seniority_levels as string[]
   // legacy fallback
   const tr = icp.target_roles as Record<string, string[]> | undefined
-  if (Array.isArray(tr?.seniorities)) return tr!.seniorities
-  return []
+  if (Array.isArray(tr?.seniorities) && tr!.seniorities.length) return tr!.seniorities
+  return DEFAULT_SENIORITIES
 }
 
 // ─── Segment form ─────────────────────────────────────────────────────────────
