@@ -143,11 +143,13 @@ async function runApolloSearch(filters: Record<string, unknown>, icp: Record<str
   const fundingRounds = icp.funding_rounds as string[] | undefined
   const fundingStages = fundingRounds?.map(r => FUNDING_STAGE_MAP[r]).filter(Boolean) ?? []
 
-  // Industry keywords — run_config overrides take priority, then ICP segments, then filter keywords
+  // Industry keywords — run_config overrides take priority, then ICP segments, then filter keywords.
+  // Guard with .length on segments: an empty array is truthy and would otherwise leave industryKeywords
+  // as [] when icp.segments is set but empty, dropping the generator output entirely.
   const segments = icp.segments as Array<{ name: string; keywords: string[] }> | undefined
   const industryKeywords = overrideKeywords?.length
     ? overrideKeywords
-    : segments
+    : segments?.length
       ? segments.flatMap(s => s.keywords.filter(k => !CONFERENCE_NOISE.has(k.toLowerCase())).slice(0, 3)).slice(0, 10)
       : (filters.keywords as string[] ?? []).filter(k => !CONFERENCE_NOISE.has(k.toLowerCase())).slice(0, 10)
 
