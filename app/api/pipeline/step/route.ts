@@ -281,15 +281,12 @@ async function runScrape(companies: ApolloCompany[]) {
   }
 }
 
-async function runExtractPeople(
-  targetDomains: string[],
-  icp: unknown,
-  scout = false,
-  domainOffset = 0,
-  targetSegment?: TargetSegment | null,
-) {
-  const key = process.env.APOLLO_API_KEY!
-  const icpData = icp as Record<string, unknown>
+// Stable identity for the seniority/title filter actually applied to Apollo.
+// Stored on the iteration so a second "Extract from all" with the same filter
+// can skip already-queried domains, and a different filter (user changed
+// seniority/titles in the ICP) invalidates the cache and re-queries.
+function buildExtractFilter(icp: unknown, targetSegment: TargetSegment | null | undefined) {
+  const icpData = (icp ?? {}) as Record<string, unknown>
   const apolloIcp = (icpData.apollo_filters ?? {}) as Record<string, unknown>
 
   // New ICP: person_seniorities (mapped Apollo values stored by IcpEditor)
@@ -302,10 +299,6 @@ async function runExtractPeople(
 
   const useSeniorities = seniorities.length > 0
 
-  if (!useSeniorities && titles.length === 0) {
-    throw new Error('ICP has no seniority or title filters — set "Seniority" in the ICP editor first')
-  }
-
   // If the iteration explicitly scoped to one seniority (e.g. "C-Suite"), use ONLY
   // that mapped Apollo value. No fallback to other levels — the user said this
   // iteration targets that slice, pulling VPs/Directors anyway defeats targeting.
@@ -317,15 +310,41 @@ async function runExtractPeople(
     ? (iterationApolloSeniority ? [iterationApolloSeniority] : seniorities)
     : []
 
-  const domainLimit = scout ? 3 : 25
-  const domainsSlice = targetDomains.slice(domainOffset, domainOffset + domainLimit)
-  const nextOffset = domainOffset + domainLimit
+  const filterHash = useSeniorities
+    ? `s:${[...effectiveSeniorities].sort().join(',')}`
+    : `t:${[...titles].map(t => t.toLowerCase()).sort().join('|')}`
+
+  return { useSeniorities, effectiveSeniorities, titles, filterHash }
+}
+
+async function runExtractPeople(
+  targetDomains: string[],
+  icp: unknown,
+  scout = false,
+  domainOffset = 0,
+  targetSegment?: TargetSegment | null,
+) {
+  const key = process.env.APOLLO_API_KEY!
+  const { useSeniorities, effectiveSeniorities, titles, filterHash } = buildExtractFilter(icp, targetSegment)
+
+  if (!useSeniorities && titles.length === 0) {
+    throw new Error('ICP has no seniority or title filters — set "Seniority" in the ICP editor first')
+  }
+
+  // scout mode keeps a hard cap (cheap probe). Otherwise process every domain
+  // the caller asked for — selecting "Extract from all" must mean all.
+  const domainsSlice = scout
+    ? targetDomains.slice(domainOffset, domainOffset + 3)
+    : targetDomains.slice(domainOffset)
+  const nextOffset = domainOffset + domainsSlice.length
   const searchErrors: string[] = []
 
-  // Step 1: collect Apollo IDs via api_search — no credits consumed
+  // Step 1: collect Apollo IDs via api_search — no credits consumed.
+  // Throttle parallelism so we don't fan out 100+ requests at once on big lists.
   const candidates: Array<{ id: string; domain: string }> = []
+  const SEARCH_CONCURRENCY = 10
 
-  await Promise.allSettled(domainsSlice.map(async (domain) => {
+  async function searchDomain(domain: string) {
     try {
       const params = new URLSearchParams()
       params.set('q_organization_domains_list[]', domain)
@@ -360,7 +379,11 @@ async function runExtractPeople(
     } catch (e) {
       console.error(`[extract_people] ${domain} threw:`, e)
     }
-  }))
+  }
+
+  for (let i = 0; i < domainsSlice.length; i += SEARCH_CONCURRENCY) {
+    await Promise.allSettled(domainsSlice.slice(i, i + SEARCH_CONCURRENCY).map(searchDomain))
+  }
 
   // Step 2: enrich in batches of 10 via bulk_match — consumes credits, returns email + linkedin_url
   const domainById = Object.fromEntries(candidates.map(c => [c.id, c.domain]))
@@ -406,6 +429,10 @@ async function runExtractPeople(
     domains_total: targetDomains.length,
     has_more: nextOffset < targetDomains.length,
     next_offset: nextOffset,
+    // Domains we actually sent to Apollo this call. Persisted by the route
+    // onto iterations.extracted_domains so re-runs can skip them.
+    queried_domains: domainsSlice,
+    filter_hash: filterHash,
     // Audit trail: which Apollo filters were actually used for this extract.
     // Helpful for verifying iteration target_segment was honored.
     filters_applied: {
@@ -506,7 +533,41 @@ export async function POST(req: Request) {
       }
       case 'extract_people': {
         if (!domainsOverride?.length) throw new Error('extract_people requires domainsOverride (called from Companies tab on selected qualified companies)')
-        artifact = await runExtractPeople(domainsOverride, projectIcp, false, 0, targetSegment)
+
+        // Dedup against previously-queried domains in this iteration. Invalidate
+        // when the seniority/title filter changes, since a different filter is a
+        // genuinely new ask even on the same companies.
+        const { filterHash } = buildExtractFilter(projectIcp, targetSegment)
+        let alreadyQueried = new Set<string>()
+        if (iterationId) {
+          const { data: iter } = await supabase
+            .from('iterations')
+            .select('extracted_domains, extract_filter_hash')
+            .eq('id', iterationId)
+            .single()
+          if (iter?.extract_filter_hash === filterHash) {
+            alreadyQueried = new Set((iter.extracted_domains as string[] | null) ?? [])
+          }
+        }
+        const remaining = domainsOverride.filter(d => !alreadyQueried.has(d))
+        const skippedCached = domainsOverride.length - remaining.length
+
+        if (remaining.length === 0) {
+          artifact = {
+            total: 0,
+            contacts: [],
+            domains_processed: 0,
+            domains_total: domainsOverride.length,
+            has_more: false,
+            next_offset: 0,
+            queried_domains: [],
+            filter_hash: filterHash,
+            skipped_already_extracted: skippedCached,
+          }
+        } else {
+          artifact = await runExtractPeople(remaining, projectIcp, false, 0, targetSegment)
+          ;(artifact as Record<string, unknown>).skipped_already_extracted = skippedCached
+        }
         break
       }
       default:
@@ -659,6 +720,30 @@ export async function POST(req: Request) {
       // Reflect contacts count back to the parent pipeline_run if there is one (skip for standalone Extract people calls)
       if (runId) {
         await supabase.from('pipeline_runs').update({ contacts_found: actualContactsCount }).eq('id', runId)
+      }
+
+      // Record domains we just queried on the iteration so a second click on
+      // "Extract from all" with the same filter skips them.
+      if (iterationId) {
+        const art = artifact as { queried_domains?: string[]; filter_hash?: string }
+        const justQueried = art.queried_domains ?? []
+        if (justQueried.length > 0 && art.filter_hash) {
+          const { data: iter } = await supabase
+            .from('iterations')
+            .select('extracted_domains, extract_filter_hash')
+            .eq('id', iterationId)
+            .single()
+          // If the filter changed since the last extract, reset the cache —
+          // the previous list was for a different ask.
+          const prev = iter?.extract_filter_hash === art.filter_hash
+            ? ((iter?.extracted_domains as string[] | null) ?? [])
+            : []
+          const merged = [...new Set([...prev, ...justQueried])]
+          await supabase
+            .from('iterations')
+            .update({ extracted_domains: merged, extract_filter_hash: art.filter_hash })
+            .eq('id', iterationId)
+        }
       }
     }
 

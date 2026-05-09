@@ -19,9 +19,15 @@ export type ProjectCompany = {
   reasoning: string | null
   source: 'pipeline' | 'manual' | 'csv'
   created_at: string
+  // Iteration-scoped extraction state (only populated when iterationId is passed)
+  contacts_in_iteration: number   // contacts pulled into the active iteration for this company
+  extracted_in_iteration: boolean // we already asked Apollo for this domain under the current filter
 }
 
-export async function getProjectCompanies(projectId: string): Promise<ProjectCompany[]> {
+export async function getProjectCompanies(
+  projectId: string,
+  iterationId?: string | null,
+): Promise<ProjectCompany[]> {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('project_companies')
@@ -30,13 +36,37 @@ export async function getProjectCompanies(projectId: string): Promise<ProjectCom
     .order('created_at', { ascending: false })
   if (error) throw new Error(error.message)
 
+  // Per-iteration: contacts already in DB, plus the Apollo-asked domain set
+  const contactCountByCompany = new Map<string, number>()
+  let extractedDomains = new Set<string>()
+  if (iterationId) {
+    const [contactsRes, iterRes] = await Promise.all([
+      supabase
+        .from('contacts')
+        .select('company_id')
+        .eq('iteration_id', iterationId),
+      supabase
+        .from('iterations')
+        .select('extracted_domains')
+        .eq('id', iterationId)
+        .single(),
+    ])
+    for (const row of (contactsRes.data ?? []) as Array<{ company_id: string | null }>) {
+      if (!row.company_id) continue
+      contactCountByCompany.set(row.company_id, (contactCountByCompany.get(row.company_id) ?? 0) + 1)
+    }
+    extractedDomains = new Set(((iterRes.data?.extracted_domains as string[] | null) ?? []))
+  }
+
   return ((data ?? []) as unknown[]).map((row) => {
     const r = row as Record<string, unknown>
     const co = r.companies as Record<string, unknown> | null
+    const companyId = r.company_id as string
+    const domain = (co?.domain as string) ?? ''
     return {
       id: r.id as string,
-      company_id: r.company_id as string,
-      domain: (co?.domain as string) ?? '',
+      company_id: companyId,
+      domain,
       name: (co?.name as string) ?? null,
       logo_url: (co?.logo_url as string) ?? null,
       scraped_at: (co?.scraped_at as string) ?? null,
@@ -48,6 +78,8 @@ export async function getProjectCompanies(projectId: string): Promise<ProjectCom
       reasoning: (r.reasoning as string) ?? null,
       source: (r.source as ProjectCompany['source']) ?? 'pipeline',
       created_at: r.created_at as string,
+      contacts_in_iteration: contactCountByCompany.get(companyId) ?? 0,
+      extracted_in_iteration: extractedDomains.has(domain),
     }
   })
 }

@@ -37,7 +37,7 @@ export default async function ProjectPage({
     getProjectCaseStudies(projectId),
     getProjectShareToken(projectId),
     activeIteration ? getIterationCustomColumns(projectId, activeIteration.id) : Promise.resolve([] as string[]),
-    getProjectCompanies(projectId),
+    getProjectCompanies(projectId, activeIteration?.id ?? null),
   ])
 
   if (!project) redirect(`/clients/${clientId}`)

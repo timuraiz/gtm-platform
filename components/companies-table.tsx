@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { Search, Upload, Trash2, RefreshCw, Users, ListChecks, ChevronLeft, ChevronRight } from 'lucide-react'
@@ -30,7 +31,7 @@ export function CompaniesTable({
   const [showUpload, setShowUpload] = useState(false)
   const [page, setPage] = useState(1)
   const [extractRunning, setExtractRunning] = useState(false)
-  const [extractResult, setExtractResult] = useState<{ contacts: number; domains: number } | null>(null)
+  const [extractResult, setExtractResult] = useState<{ contacts: number; domains: number; skipped: number } | null>(null)
   const [classifyRunning, setClassifyRunning] = useState(false)
   const [classifyResult, setClassifyResult] = useState<{ qualified: number; rejected: number; failed: number } | null>(null)
 
@@ -138,8 +139,13 @@ export function CompaniesTable({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Extract failed')
-      const total = (data.artifact as { total: number })?.total ?? 0
-      setExtractResult({ contacts: total, domains: domains.length })
+      const art = (data.artifact ?? {}) as { total?: number; domains_processed?: number; skipped_already_extracted?: number }
+      const total = art.total ?? 0
+      setExtractResult({
+        contacts: total,
+        domains: art.domains_processed ?? domains.length,
+        skipped: art.skipped_already_extracted ?? 0,
+      })
       router.refresh()
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Extract failed')
@@ -321,7 +327,9 @@ export function CompaniesTable({
 
       {extractResult && (
         <div className="rounded-lg bg-emerald-50 text-emerald-700 px-3 py-2 text-xs">
-          ✓ Extracted {extractResult.contacts} contacts from {extractResult.domains} companies. Switch to Contacts tab to view.
+          ✓ Extracted {extractResult.contacts} contacts from {extractResult.domains} {extractResult.domains === 1 ? 'company' : 'companies'}
+          {extractResult.skipped > 0 ? ` · ${extractResult.skipped} already extracted, skipped` : ''}.
+          {' '}Switch to Contacts tab to view.
         </div>
       )}
       {classifyResult && (
@@ -341,6 +349,7 @@ export function CompaniesTable({
               <th className="text-left px-4 py-2.5 text-xs font-medium text-zinc-500 w-8">#</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-zinc-500">Company</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-zinc-500">Status</th>
+              <th className="text-left px-4 py-2.5 text-xs font-medium text-zinc-500">People</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-zinc-500">Source</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-zinc-500">Segment</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-zinc-500">Scraped</th>
@@ -370,6 +379,12 @@ export function CompaniesTable({
                       reasoning={c.reasoning}
                       segment={c.segment}
                       confidence={c.confidence}
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <PeopleCell
+                      contacts={c.contacts_in_iteration}
+                      extracted={c.extracted_in_iteration}
                     />
                   </td>
                   <td className="px-4 py-3">
@@ -416,6 +431,30 @@ export function CompaniesTable({
   )
 }
 
+function PeopleCell({ contacts, extracted }: { contacts: number; extracted: boolean }) {
+  if (contacts > 0) {
+    return (
+      <span
+        className="text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700"
+        title={`${contacts} ${contacts === 1 ? 'person' : 'people'} pulled into this iteration`}
+      >
+        ✓ {contacts}
+      </span>
+    )
+  }
+  if (extracted) {
+    return (
+      <span
+        className="text-xs px-2 py-0.5 rounded bg-zinc-100 text-zinc-500"
+        title="Apollo had no people matching the current seniority/title filter for this domain"
+      >
+        no match
+      </span>
+    )
+  }
+  return <span className="text-xs text-zinc-300">—</span>
+}
+
 function StatusBadge({
   status,
   reasoning,
@@ -428,17 +467,43 @@ function StatusBadge({
   confidence?: number | null
 }) {
   const [open, setOpen] = useState(false)
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
   const wrapRef = useRef<HTMLSpanElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  function updateCoords() {
+    const el = wrapRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const POPOVER_WIDTH = 320
+    const margin = 8
+    let left = r.left
+    if (left + POPOVER_WIDTH + margin > window.innerWidth) {
+      left = Math.max(margin, window.innerWidth - POPOVER_WIDTH - margin)
+    }
+    setCoords({ top: r.bottom + 6, left })
+  }
+
   function show() {
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null }
+    updateCoords()
     setOpen(true)
   }
   function hide() {
     if (closeTimer.current) clearTimeout(closeTimer.current)
     closeTimer.current = setTimeout(() => setOpen(false), 120)
   }
+
+  useEffect(() => {
+    if (!open) return
+    const onScroll = () => updateCoords()
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    return () => {
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
+  }, [open])
 
   const label =
     status === 'qualified' ? '✓ Qualified' :
@@ -462,41 +527,45 @@ function StatusBadge({
         {label}
       </span>
 
-      <AnimatePresence>
-        {open && hasContext && (
-          <motion.div
-            initial={{ opacity: 0, y: 4, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 4, scale: 0.98 }}
-            transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-            onMouseEnter={show}
-            onMouseLeave={hide}
-            className="absolute left-0 top-full mt-1.5 z-30 w-80 rounded-xl border border-zinc-100 bg-white shadow-lg p-3 text-left"
-          >
-            {(segment || confidence != null) && (
-              <div className="flex items-center gap-2 mb-2">
-                {segment && (
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 rounded px-1.5 py-0.5">
-                    {segment}
-                  </span>
-                )}
-                {confidence != null && (
-                  <span className="text-[10px] text-zinc-400 tabular-nums">
-                    confidence {confidence}%
-                  </span>
-                )}
-              </div>
-            )}
-            {reasoning ? (
-              <p className="text-xs text-zinc-600 leading-relaxed whitespace-pre-line">
-                {reasoning}
-              </p>
-            ) : (
-              <p className="text-xs text-zinc-400 italic">No classifier note recorded.</p>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {open && hasContext && coords && (
+            <motion.div
+              initial={{ opacity: 0, y: 4, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 4, scale: 0.98 }}
+              transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+              onMouseEnter={show}
+              onMouseLeave={hide}
+              style={{ position: 'fixed', top: coords.top, left: coords.left, width: 320 }}
+              className="z-[100] rounded-xl border border-zinc-100 bg-white shadow-lg p-3 text-left"
+            >
+              {(segment || confidence != null) && (
+                <div className="flex items-center gap-2 mb-2">
+                  {segment && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 rounded px-1.5 py-0.5">
+                      {segment}
+                    </span>
+                  )}
+                  {confidence != null && (
+                    <span className="text-[10px] text-zinc-400 tabular-nums">
+                      confidence {confidence}%
+                    </span>
+                  )}
+                </div>
+              )}
+              {reasoning ? (
+                <p className="text-xs text-zinc-600 leading-relaxed whitespace-pre-line">
+                  {reasoning}
+                </p>
+              ) : (
+                <p className="text-xs text-zinc-400 italic">No classifier note recorded.</p>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </span>
   )
 }
