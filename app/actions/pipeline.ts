@@ -14,7 +14,7 @@ export type StepRecord = {
 export type PipelineRun = {
   id: string
   project_id: string
-  status: 'pending' | 'running' | 'done' | 'error'
+  status: 'pending' | 'running' | 'idle' | 'done' | 'error'
   steps: StepRecord[]
   filters: unknown
   companies_found: number

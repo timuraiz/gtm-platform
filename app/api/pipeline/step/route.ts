@@ -593,11 +593,15 @@ export async function POST(req: Request) {
     if (trackInRunHistory && runId) {
       const newStep = { name: step, status: 'done', artifact }
       const updatedSteps = [...existingSteps.filter(s => s.name !== step), newStep]
-      // scrape is now the final step in the companies pipeline → mark run done
+      // status semantics: 'running' = a step is in flight right now, 'idle' = between
+      // user-triggered steps (more steps possible, but server isn't doing anything),
+      // 'done' = final step completed, 'error' = a step errored. The previous code
+      // used 'running' as a proxy for "more to do" which made the polling UI
+      // synthesize a fake running state on the next step.
       const isFinalStep = step === 'scrape'
       const updates: Record<string, unknown> = {
         steps: updatedSteps,
-        status: isFinalStep ? 'done' : 'running',
+        status: isFinalStep ? 'done' : 'idle',
         updated_at: new Date().toISOString(),
       }
       if (step === 'apollo_search') {

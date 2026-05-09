@@ -170,7 +170,7 @@ export function ProjectPipelineView({ projectId, iterationId, initialRuns, icp }
             projectId={projectId}
             iterationId={iterationId}
             icp={icp}
-            latestRunId={runs.find(r => r.status === 'running' || r.status === 'done')?.id ?? null}
+            latestRunId={runs.find(r => r.status === 'running' || r.status === 'idle' || r.status === 'done')?.id ?? null}
             onRunCreated={onRunStarted}
             onDone={refreshRuns}
           />
