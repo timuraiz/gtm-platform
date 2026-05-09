@@ -166,15 +166,21 @@ async function runApolloSearch(filters: Record<string, unknown>, icp: Record<str
   const revenueMin = filters.revenue_min as number | undefined
   const revenueMax = filters.revenue_max as number | undefined
 
-  // Industry keywords — run_config overrides take priority, then ICP segments, then filter keywords.
-  // Guard with .length on segments: an empty array is truthy and would otherwise leave industryKeywords
-  // as [] when icp.segments is set but empty, dropping the generator output entirely.
+  // Industry keywords — run_config override wins, otherwise use the generator
+  // output. The skill prompt already ingests icp.segments + icp.industries +
+  // target_segment when producing filters.keywords (~80 entries), so picking
+  // a few keywords off icp.segments here was a strict downgrade. With one
+  // segment the old branch capped Apollo to 3 keyword queries and the other
+  // 77 generated keywords were silently discarded. Fall back to segment
+  // keywords only when the generator returned nothing.
+  const generated = (filters.keywords as string[] | undefined) ?? []
   const segments = icp.segments as Array<{ name: string; keywords: string[] }> | undefined
+  const segmentFallback = segments?.flatMap(s => s.keywords ?? []) ?? []
   const industryKeywords = overrideKeywords?.length
     ? overrideKeywords
-    : segments?.length
-      ? segments.flatMap(s => s.keywords.filter(k => !CONFERENCE_NOISE.has(k.toLowerCase())).slice(0, 3)).slice(0, 10)
-      : (filters.keywords as string[] ?? []).filter(k => !CONFERENCE_NOISE.has(k.toLowerCase())).slice(0, 10)
+    : (generated.length ? generated : segmentFallback)
+        .filter(k => !CONFERENCE_NOISE.has(k.toLowerCase()))
+        .slice(0, 10)
 
   let apolloError: string | null = null
 
