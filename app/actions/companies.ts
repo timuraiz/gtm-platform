@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/utils/supabase/server'
+import { fetchAll } from '@/lib/supabase-pagination'
 
 export type ProjectCompany = {
   id: string                       // project_companies.id
@@ -29,34 +30,35 @@ export async function getProjectCompanies(
   iterationId?: string | null,
 ): Promise<ProjectCompany[]> {
   const supabase = await createClient()
-  const { data, error } = await supabase
-    .from('project_companies')
-    .select('id, company_id, qualification_status, is_target, confidence, segment, reasoning, source, created_at, companies(domain, name, logo_url, scraped_at, apollo_fetched_at)')
-    .eq('project_id', projectId)
-    .order('created_at', { ascending: false })
-    // Supabase-js defaults to a 1000-row cap, which silently truncated the
-    // Companies tab for projects that grew past that. Bump to a realistic
-    // upper bound; if anyone crosses it we'd need server-side pagination.
-    .range(0, 49999)
-  if (error) throw new Error(error.message)
+
+  const data = await fetchAll<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('project_companies')
+      .select('id, company_id, qualification_status, is_target, confidence, segment, reasoning, source, created_at, companies(domain, name, logo_url, scraped_at, apollo_fetched_at)')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .range(from, to),
+  )
 
   // Per-iteration: contacts already in DB, plus the Apollo-asked domain set
   const contactCountByCompany = new Map<string, number>()
   let extractedDomains = new Set<string>()
   if (iterationId) {
-    const [contactsRes, iterRes] = await Promise.all([
-      supabase
-        .from('contacts')
-        .select('company_id')
-        .eq('iteration_id', iterationId)
-        .range(0, 49999),
+    const [contactRows, iterRes] = await Promise.all([
+      fetchAll<{ company_id: string | null }>((from, to) =>
+        supabase
+          .from('contacts')
+          .select('company_id')
+          .eq('iteration_id', iterationId)
+          .range(from, to),
+      ),
       supabase
         .from('iterations')
         .select('extracted_domains')
         .eq('id', iterationId)
         .single(),
     ])
-    for (const row of (contactsRes.data ?? []) as Array<{ company_id: string | null }>) {
+    for (const row of contactRows) {
       if (!row.company_id) continue
       contactCountByCompany.set(row.company_id, (contactCountByCompany.get(row.company_id) ?? 0) + 1)
     }

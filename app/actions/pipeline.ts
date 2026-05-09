@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { getBlacklistMatchSets, getClientIdForProject } from './blacklist'
 import { isBlacklisted } from '@/lib/blacklist'
+import { fetchAll } from '@/lib/supabase-pagination'
 
 export type StepRecord = {
   name: string
@@ -61,15 +62,17 @@ export type Contact = {
 
 export async function getContacts(projectId: string, iterationId?: string): Promise<Contact[]> {
   const supabase = await createClient()
-  let query = supabase
-    .from('contacts')
-    .select('id, first_name, last_name, title, email, linkedin_url, created_at, custom_data, companies(name, domain, logo_url)')
-    .eq('project_id', projectId)
-    .order('created_at', { ascending: false })
-    .range(0, 49999)
-  if (iterationId) query = query.eq('iteration_id', iterationId)
-  const { data } = await query
-  return (data ?? []).map((c: Record<string, unknown>) => {
+  const data = await fetchAll<Record<string, unknown>>((from, to) => {
+    let q = supabase
+      .from('contacts')
+      .select('id, first_name, last_name, title, email, linkedin_url, created_at, custom_data, companies(name, domain, logo_url)')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .range(from, to)
+    if (iterationId) q = q.eq('iteration_id', iterationId)
+    return q
+  })
+  return data.map((c: Record<string, unknown>) => {
     const co = c.companies as { name: string; domain: string; logo_url: string | null } | null
     return {
       id: c.id as string,
