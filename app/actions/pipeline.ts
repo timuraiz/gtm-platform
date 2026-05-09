@@ -60,6 +60,16 @@ export type Contact = {
   custom_data: Record<string, string> | null
 }
 
+// Cheap counter for the tab badge — server-side COUNT, no row payload.
+export async function getContactsCount(projectId: string, iterationId?: string): Promise<number> {
+  const supabase = await createClient()
+  let q = supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('project_id', projectId)
+  if (iterationId) q = q.eq('iteration_id', iterationId)
+  const { count, error } = await q
+  if (error) throw new Error(error.message)
+  return count ?? 0
+}
+
 export async function getContacts(projectId: string, iterationId?: string): Promise<Contact[]> {
   const supabase = await createClient()
   const data = await fetchAll<Record<string, unknown>>((from, to) => {

@@ -25,6 +25,17 @@ export type ProjectCompany = {
   extracted_in_iteration: boolean // we already asked Apollo for this domain under the current filter
 }
 
+// Cheap counter for the tab badge — server-side COUNT, no row payload.
+export async function getProjectCompaniesCount(projectId: string): Promise<number> {
+  const supabase = await createClient()
+  const { count, error } = await supabase
+    .from('project_companies')
+    .select('id', { count: 'exact', head: true })
+    .eq('project_id', projectId)
+  if (error) throw new Error(error.message)
+  return count ?? 0
+}
+
 export async function getProjectCompanies(
   projectId: string,
   iterationId?: string | null,

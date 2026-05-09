@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { getProject, getPipelineRuns, getContacts, getIterationCustomColumns } from '@/app/actions/pipeline'
-import { getProjectCompanies } from '@/app/actions/companies'
+import { getProject, getPipelineRuns, getContacts, getContactsCount, getIterationCustomColumns } from '@/app/actions/pipeline'
+import { getProjectCompanies, getProjectCompaniesCount } from '@/app/actions/companies'
 import { getSequences, getProjectCaseStudies, getProjectShareToken } from '@/app/actions/sequences'
 import { getIterations } from '@/app/actions/iterations'
 import { ProjectPipelineView } from '@/components/project-pipeline-view'
@@ -29,15 +29,23 @@ export default async function ProjectPage({
   const iterations = await getIterations(projectId)
   const activeIteration = iterations.find(i => i.id === iter) ?? iterations[0] ?? null
 
-  const [project, runs, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies] = await Promise.all([
+  // Lazy-load the heavy lists only for the active tab. Tab badges always use
+  // cheap COUNT-only queries so the page stays fast at 10k+ companies.
+  const loadCompanies = tab === 'companies'
+  const loadContacts = tab === 'contacts' || tab === 'sequences'
+  const loadSequences = tab === 'sequences'
+
+  const [project, runs, companiesCount, contactsCount, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies] = await Promise.all([
     getProject(projectId),
     getPipelineRuns(projectId),
-    activeIteration ? getContacts(projectId, activeIteration.id) : Promise.resolve([]),
-    activeIteration ? getSequences(projectId, activeIteration.id) : Promise.resolve([]),
+    getProjectCompaniesCount(projectId),
+    activeIteration ? getContactsCount(projectId, activeIteration.id) : Promise.resolve(0),
+    activeIteration && loadContacts ? getContacts(projectId, activeIteration.id) : Promise.resolve([]),
+    activeIteration && loadSequences ? getSequences(projectId, activeIteration.id) : Promise.resolve([]),
     getProjectCaseStudies(projectId),
     getProjectShareToken(projectId),
     activeIteration ? getIterationCustomColumns(projectId, activeIteration.id) : Promise.resolve([] as string[]),
-    getProjectCompanies(projectId, activeIteration?.id ?? null),
+    activeIteration && loadCompanies ? getProjectCompanies(projectId, activeIteration.id) : Promise.resolve([]),
   ])
 
   if (!project) redirect(`/clients/${clientId}`)
@@ -85,8 +93,8 @@ export default async function ProjectPage({
           <div className="border-b border-zinc-100 mb-6 flex gap-1">
             {([
               { key: 'pipeline', label: 'Pipeline' },
-              { key: 'companies', label: `Companies${projectCompanies.length ? ` (${projectCompanies.length})` : ''}` },
-              { key: 'contacts', label: `Contacts${contacts.length ? ` (${contacts.length})` : ''}` },
+              { key: 'companies', label: `Companies${companiesCount ? ` (${companiesCount})` : ''}` },
+              { key: 'contacts', label: `Contacts${contactsCount ? ` (${contactsCount})` : ''}` },
               { key: 'sequences', label: `Sequences${sequences.length ? ` (${sequences.length})` : ''}` },
               { key: 'stats', label: 'Stats' },
             ] as const).map(t => (
