@@ -34,6 +34,10 @@ export async function getProjectCompanies(
     .select('id, company_id, qualification_status, is_target, confidence, segment, reasoning, source, created_at, companies(domain, name, logo_url, scraped_at, apollo_fetched_at)')
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
+    // Supabase-js defaults to a 1000-row cap, which silently truncated the
+    // Companies tab for projects that grew past that. Bump to a realistic
+    // upper bound; if anyone crosses it we'd need server-side pagination.
+    .range(0, 49999)
   if (error) throw new Error(error.message)
 
   // Per-iteration: contacts already in DB, plus the Apollo-asked domain set
@@ -44,7 +48,8 @@ export async function getProjectCompanies(
       supabase
         .from('contacts')
         .select('company_id')
-        .eq('iteration_id', iterationId),
+        .eq('iteration_id', iterationId)
+        .range(0, 49999),
       supabase
         .from('iterations')
         .select('extracted_domains')

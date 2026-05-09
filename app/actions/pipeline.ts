@@ -66,6 +66,7 @@ export async function getContacts(projectId: string, iterationId?: string): Prom
     .select('id, first_name, last_name, title, email, linkedin_url, created_at, custom_data, companies(name, domain, logo_url)')
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
+    .range(0, 49999)
   if (iterationId) query = query.eq('iteration_id', iterationId)
   const { data } = await query
   return (data ?? []).map((c: Record<string, unknown>) => {
