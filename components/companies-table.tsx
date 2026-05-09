@@ -145,7 +145,7 @@ export function CompaniesTable({
     try {
       for (let i = 0; i < ids.length; i += CLASSIFY_CHUNK) {
         const chunk = ids.slice(i, i + CLASSIFY_CHUNK)
-        const res = await classifyCompanies(projectId, chunk)
+        const res = await classifyCompanies(projectId, chunk, iterationId)
         q += res.qualified
         r += res.rejected
         f += res.failed

@@ -302,21 +302,27 @@ const CLASSIFY_CONCURRENCY = 5
 export async function classifyCompanies(
   projectId: string,
   projectCompanyIds: string[],
+  iterationId?: string | null,
 ): Promise<{ qualified: number; rejected: number; failed: number }> {
   if (projectCompanyIds.length === 0) return { qualified: 0, rejected: 0, failed: 0 }
   const supabase = await createClient()
 
-  const [{ data: project }, { data: skill }, { data: rows }] = await Promise.all([
+  const [{ data: project }, { data: skill }, { data: rows }, iterRes] = await Promise.all([
     supabase.from('projects').select('icp_json, offer_text').eq('id', projectId).single(),
     supabase.from('skills').select('content').eq('name', 'company-qualification').single(),
     supabase
       .from('project_companies')
       .select('id, company_id, companies(domain, name, scraped_text, apollo_data)')
       .in('id', projectCompanyIds),
+    iterationId
+      ? supabase.from('iterations').select('target_segment').eq('id', iterationId).single()
+      : Promise.resolve({ data: null }),
   ])
   if (!project) throw new Error('Project not found')
   if (!skill) throw new Error('Skill "company-qualification" not found in DB')
   if (!rows || rows.length === 0) return { qualified: 0, rejected: 0, failed: 0 }
+
+  const targetSegment = (iterRes?.data?.target_segment as { industry?: string; geo?: string; seniority?: string } | null) ?? null
 
   type Row = { id: string; company_id: string; companies: { domain: string; name: string | null; scraped_text: string | null; apollo_data: Record<string, unknown> | null } | null }
   const candidates = (rows as unknown as Row[])
@@ -365,8 +371,19 @@ export async function classifyCompanies(
       description: (c.apollo_data?.short_description as string) ?? '',
       scraped: c.scraped_text.slice(0, 1500),
     }))
+    // The iteration's target_segment narrows the project ICP for THIS run.
+    // Without it, classify uses the full broad ICP (e.g. 8 industries) and ends
+    // up qualifying companies that match the project but not what the user
+    // actually picked for this iteration.
+    const segmentHints: string[] = []
+    if (targetSegment?.industry) segmentHints.push(`industry MUST be ${targetSegment.industry} (or directly adjacent — reject if it isn't)`)
+    if (targetSegment?.geo) segmentHints.push(`geo MUST be ${targetSegment.geo}`)
+    const segmentBlock = segmentHints.length
+      ? `\n\nIteration narrows the ICP to:\n- ${segmentHints.join('\n- ')}\nIf the company doesn't match these constraints, return is_target=false even if it otherwise fits the broader project ICP.`
+      : ''
+
     const prompt = `Offer: ${offerText}
-ICP: ${JSON.stringify(icp ?? {})}
+ICP: ${JSON.stringify(icp ?? {})}${segmentBlock}
 
 Classify each company as is_target=true (matches ICP) or false. Return ONLY a JSON array:
 [{"domain":"...","is_target":bool,"confidence":0-100,"segment":"LABEL","reasoning":"..."}]
