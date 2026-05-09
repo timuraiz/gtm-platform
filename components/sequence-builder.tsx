@@ -334,12 +334,14 @@ function ConfigForm({
   caseStudies,
   iterationChannel,
   customColumns,
+  defaultName,
 }: {
   onGenerate: (config: SequenceConfig, name: string, selectedCaseStudies: CaseStudy[]) => void
   loading: boolean
   caseStudies: CaseStudy[]
   iterationChannel: 'linkedin' | 'email'
   customColumns: string[]
+  defaultName?: string
 }) {
   const [config, setConfig] = useState<SequenceConfig>({
     channel: iterationChannel,
@@ -349,7 +351,7 @@ function ConfigForm({
     language: 'English',
     user_notes: '',
   })
-  const [name, setName] = useState('')
+  const [name, setName] = useState(defaultName ?? '')
   const [selectedIdx, setSelectedIdx] = useState<Set<number>>(() => new Set(caseStudies.map((_, i) => i)))
 
   function toggleCaseStudy(i: number) {
@@ -652,6 +654,7 @@ export function SequenceBuilder({
   caseStudies,
   iterationId,
   iterationChannel,
+  iterationSegment,
   customColumns = [],
 }: {
   projectId: string
@@ -659,8 +662,15 @@ export function SequenceBuilder({
   caseStudies: CaseStudy[]
   iterationId: string
   iterationChannel: 'linkedin' | 'email'
+  iterationSegment?: { industry?: string | null; geo?: string | null; seniority?: string | null } | null
   customColumns?: string[]
 }) {
+  // Auto-fill the sequence name from the iteration's target_segment so the
+  // user doesn't retype "Design agencies · Europe · C-Suite" every time.
+  // They can still rename in the input.
+  const defaultSequenceName = [iterationSegment?.industry, iterationSegment?.geo, iterationSegment?.seniority]
+    .filter(Boolean)
+    .join(' · ')
   // Order ASC so v1 is the oldest version
   const [sequences, setSequences] = useState<Sequence[]>(
     [...initialSequences].sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at)),
@@ -792,7 +802,7 @@ export function SequenceBuilder({
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               className="space-y-6"
             >
-              <ConfigForm onGenerate={handleGenerate} loading={generating} caseStudies={caseStudies} iterationChannel={iterationChannel} customColumns={customColumns} />
+              <ConfigForm onGenerate={handleGenerate} loading={generating} caseStudies={caseStudies} iterationChannel={iterationChannel} customColumns={customColumns} defaultName={defaultSequenceName} />
 
               {pendingSteps && pendingConfig && (
                 <div className="space-y-3">

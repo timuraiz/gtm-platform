@@ -119,7 +119,7 @@ export default async function ProjectPage({
             ) : tab === 'contacts' ? (
               <ContactsTable contacts={contacts} projectId={projectId} iterationId={activeIteration.id} />
             ) : tab === 'sequences' ? (
-              <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} iterationId={activeIteration.id} iterationChannel={activeIteration.channel} customColumns={customColumns} />
+              <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} iterationId={activeIteration.id} iterationChannel={activeIteration.channel} iterationSegment={activeIteration.target_segment} customColumns={customColumns} />
             ) : tab === 'stats' ? (
               <IterationStats iterationId={activeIteration.id} initialStats={activeIteration.stats ?? null} uploadedAt={activeIteration.stats_uploaded_at ?? null} />
             ) : (
