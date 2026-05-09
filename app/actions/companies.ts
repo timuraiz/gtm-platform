@@ -201,17 +201,20 @@ async function scrapeOne(url: string): Promise<string> {
   } catch { return '' }
 }
 
+// Cap how many sites we hit in parallel. The previous Promise.all over 359
+// domains exhausted Node's connection pool and silently failed the bulk of
+// them — most "ok" returns were empty strings.
+const SCRAPE_CONCURRENCY = 20
+
 export async function rescrapeNow(domains: string[]): Promise<{ ok: number; failed: number }> {
   if (domains.length === 0) return { ok: 0, failed: 0 }
   const supabase = await createClient()
   const now = new Date().toISOString()
 
-  const results = await Promise.all(
-    domains.map(async (d) => {
-      const text = await scrapeOne(`https://${d}`)
-      return { domain: d, text, ok: text.length > 100 }
-    })
-  )
+  const results = await pMap(domains, SCRAPE_CONCURRENCY, async (d) => {
+    const text = await scrapeOne(`https://${d}`)
+    return { domain: d, text, ok: text.length > 100 }
+  })
 
   // Persist all attempts (even short/empty results bump scraped_at — explicit "we tried")
   await supabase.from('companies').upsert(

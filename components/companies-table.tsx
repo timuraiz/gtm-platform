@@ -34,6 +34,9 @@ export function CompaniesTable({
   const [extractResult, setExtractResult] = useState<{ contacts: number; domains: number; skipped: number } | null>(null)
   const [classifyRunning, setClassifyRunning] = useState(false)
   const [classifyResult, setClassifyResult] = useState<{ qualified: number; rejected: number; failed: number } | null>(null)
+  const [scrapeResult, setScrapeResult] = useState<{ ok: number; failed: number } | null>(null)
+  const [scrapeProgress, setScrapeProgress] = useState<{ done: number; total: number; ok: number; failed: number } | null>(null)
+  const [classifyProgress, setClassifyProgress] = useState<{ done: number; total: number; qualified: number; rejected: number; failed: number } | null>(null)
 
   useEffect(() => { setCompanies(initial); setSelected(new Set()); setPage(1) }, [initial])
 
@@ -93,19 +96,43 @@ export function CompaniesTable({
     } finally { setBusy(false) }
   }
 
+  // Chunk size for bulk operations. Each chunk is one server call; the server
+  // caps in-flight fetches inside it. Wall time per chunk ≈ slowest fetch.
+  const SCRAPE_CHUNK = 30
+  const CLASSIFY_CHUNK = 60
+
   async function handleRescrape(idsArg?: string[]) {
     const ids = idsArg ?? Array.from(selected)
     if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const domains = companies.filter(c => idSet.has(c.id)).map(c => c.domain)
     setBusy(true)
+    setScrapeResult(null)
+    setScrapeProgress({ done: 0, total: domains.length, ok: 0, failed: 0 })
+    let totalOk = 0
+    let totalFailed = 0
     try {
-      const idSet = new Set(ids)
-      const domains = companies.filter(c => idSet.has(c.id)).map(c => c.domain)
-      await rescrapeNow(domains)
+      for (let i = 0; i < domains.length; i += SCRAPE_CHUNK) {
+        const chunk = domains.slice(i, i + SCRAPE_CHUNK)
+        const res = await rescrapeNow(chunk)
+        totalOk += res.ok
+        totalFailed += res.failed
+        setScrapeProgress({
+          done: Math.min(i + SCRAPE_CHUNK, domains.length),
+          total: domains.length,
+          ok: totalOk,
+          failed: totalFailed,
+        })
+      }
       const now = new Date().toISOString()
       setCompanies(prev => prev.map(c => idSet.has(c.id) ? { ...c, scraped_at: now } : c))
       setSelected(new Set())
+      setScrapeResult({ ok: totalOk, failed: totalFailed })
       router.refresh()
-    } finally { setBusy(false) }
+    } finally {
+      setBusy(false)
+      setScrapeProgress(null)
+    }
   }
 
   async function handleClassify(idsArg?: string[]) {
@@ -113,14 +140,32 @@ export function CompaniesTable({
     if (ids.length === 0) return
     setClassifyRunning(true)
     setClassifyResult(null)
+    setClassifyProgress({ done: 0, total: ids.length, qualified: 0, rejected: 0, failed: 0 })
+    let q = 0, r = 0, f = 0
     try {
-      const res = await classifyCompanies(projectId, ids)
-      setClassifyResult(res)
+      for (let i = 0; i < ids.length; i += CLASSIFY_CHUNK) {
+        const chunk = ids.slice(i, i + CLASSIFY_CHUNK)
+        const res = await classifyCompanies(projectId, chunk)
+        q += res.qualified
+        r += res.rejected
+        f += res.failed
+        setClassifyProgress({
+          done: Math.min(i + CLASSIFY_CHUNK, ids.length),
+          total: ids.length,
+          qualified: q,
+          rejected: r,
+          failed: f,
+        })
+      }
+      setClassifyResult({ qualified: q, rejected: r, failed: f })
       setSelected(new Set())
       router.refresh()
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Classify failed')
-    } finally { setClassifyRunning(false) }
+    } finally {
+      setClassifyRunning(false)
+      setClassifyProgress(null)
+    }
   }
 
   async function handleExtractPeople(idsArg?: string[]) {
@@ -166,6 +211,9 @@ export function CompaniesTable({
   }
   async function bulkScrape() {
     await handleRescrape(bulkIds())
+  }
+  async function bulkClassify() {
+    await handleClassify(bulkIds())
   }
   async function bulkExtract() {
     if (!iterationId) { alert('Select an iteration first'); return }
@@ -293,6 +341,17 @@ export function CompaniesTable({
                 Scrape all ({filtered.length})
               </button>
               <button
+                onClick={bulkClassify}
+                disabled={classifyRunning || busy}
+                title={`Classify ${filtered.length} ${filter === 'all' ? '' : filter} compan${filtered.length === 1 ? 'y' : 'ies'} against the project ICP`}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 transition-colors"
+              >
+                {classifyRunning
+                  ? <span className="size-3.5 rounded-full border-2 border-zinc-300 border-t-zinc-600 animate-spin" />
+                  : <ListChecks size={13} />}
+                Classify all ({filtered.length})
+              </button>
+              <button
                 onClick={bulkExtract}
                 disabled={extractRunning || !iterationId}
                 title={!iterationId ? 'Select an iteration first' : `Extract people from ${filtered.length} ${filter === 'all' ? '' : filter} compan${filtered.length === 1 ? 'y' : 'ies'}`}
@@ -325,6 +384,27 @@ export function CompaniesTable({
         </div>
       </div>
 
+      {scrapeProgress && (
+        <BulkProgress
+          label="Scraping"
+          done={scrapeProgress.done}
+          total={scrapeProgress.total}
+          breakdown={`ok ${scrapeProgress.ok} · empty ${scrapeProgress.failed}`}
+        />
+      )}
+      {classifyProgress && (
+        <BulkProgress
+          label="Classifying"
+          done={classifyProgress.done}
+          total={classifyProgress.total}
+          breakdown={`qualified ${classifyProgress.qualified} · rejected ${classifyProgress.rejected}${classifyProgress.failed > 0 ? ` · failed ${classifyProgress.failed}` : ''}`}
+        />
+      )}
+      {scrapeResult && !scrapeProgress && (
+        <div className="rounded-lg bg-blue-50 text-blue-700 px-3 py-2 text-xs">
+          ✓ Scraped {scrapeResult.ok + scrapeResult.failed} · {scrapeResult.ok} got content · {scrapeResult.failed} returned empty (timeout, blocked, or DNS).
+        </div>
+      )}
       {extractResult && (
         <div className="rounded-lg bg-emerald-50 text-emerald-700 px-3 py-2 text-xs">
           ✓ Extracted {extractResult.contacts} contacts from {extractResult.domains} {extractResult.domains === 1 ? 'company' : 'companies'}
@@ -427,6 +507,25 @@ export function CompaniesTable({
       )}
 
       {showUpload && <UploadCompaniesModal projectId={projectId} onClose={() => setShowUpload(false)} />}
+    </div>
+  )
+}
+
+function BulkProgress({ label, done, total, breakdown }: { label: string; done: number; total: number; breakdown: string }) {
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100)
+  return (
+    <div className="rounded-lg border border-zinc-100 bg-white px-3 py-2 text-xs text-zinc-600">
+      <div className="flex items-center justify-between gap-3">
+        <span>
+          <span className="font-medium text-zinc-700">{label}</span>{' '}
+          <span className="tabular-nums">{done} / {total}</span>{' '}
+          <span className="text-zinc-400">· {breakdown}</span>
+        </span>
+        <span className="text-zinc-400 tabular-nums">{pct}%</span>
+      </div>
+      <div className="mt-1.5 h-1 rounded-full bg-zinc-100 overflow-hidden">
+        <div className="h-full bg-zinc-900 transition-all duration-300" style={{ width: `${pct}%` }} />
+      </div>
     </div>
   )
 }
