@@ -176,11 +176,23 @@ async function runApolloSearch(filters: Record<string, unknown>, icp: Record<str
   const generated = (filters.keywords as string[] | undefined) ?? []
   const segments = icp.segments as Array<{ name: string; keywords: string[] }> | undefined
   const segmentFallback = segments?.flatMap(s => s.keywords ?? []) ?? []
-  const industryKeywords = overrideKeywords?.length
+  const rawKeywords = overrideKeywords?.length
     ? overrideKeywords
     : (generated.length ? generated : segmentFallback)
-        .filter(k => !CONFERENCE_NOISE.has(k.toLowerCase()))
-        .slice(0, 10)
+  // Apollo's q_organization_keyword_tags index is case- and form-sensitive
+  // ("Digital Agencies" → 502, "digital agency" → 24k). Normalize to lowercase
+  // trimmed forms and dedupe so plural/capitalized variants don't burn keyword
+  // slots on zero-hit queries. Cap at 20 — Apollo allows 600 calls/hour, well
+  // above this; a wider cap soaks up the cases where 4/10 keywords return 0.
+  const seenKw = new Set<string>()
+  const industryKeywords: string[] = []
+  for (const k of rawKeywords) {
+    const norm = (k ?? '').toLowerCase().trim()
+    if (!norm || seenKw.has(norm) || CONFERENCE_NOISE.has(norm)) continue
+    seenKw.add(norm)
+    industryKeywords.push(norm)
+    if (industryKeywords.length >= 20) break
+  }
 
   let apolloError: string | null = null
 
