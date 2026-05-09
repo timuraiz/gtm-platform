@@ -508,10 +508,26 @@ export async function POST(req: Request) {
         const filters = getArtifact('generate_filters') as Record<string, unknown>
         if (!filters) throw new Error('Run generate_filters first')
         const overrideKeywords = (project.run_config_json as { keywords?: string[] } | null)?.keywords
-        // If iteration narrows to a specific industry, prepend it as the top keyword
-        const segmentKeywords = targetSegment?.industry
-          ? [targetSegment.industry, ...(overrideKeywords ?? [])]
-          : overrideKeywords
+        // Treat target_segment.industry as a keyword override only when the user
+        // explicitly set run_config.keywords. Otherwise the 79 generated keywords
+        // get silently replaced by one literal like "Digital Agencies", which
+        // barely matches Apollo's keyword index (~500 vs 24k for "Digital Agency"),
+        // and the rate-limiting slice(0,10) inside runApolloSearch is only applied
+        // on the fallback path. When there's no manual override, prepend the
+        // iteration industry to filters.keywords so it stays #1 but the generator
+        // output is still used and capped.
+        let segmentKeywords: string[] | undefined
+        if (overrideKeywords?.length) {
+          segmentKeywords = targetSegment?.industry
+            ? [targetSegment.industry, ...overrideKeywords]
+            : overrideKeywords
+        } else {
+          segmentKeywords = undefined
+          if (targetSegment?.industry) {
+            const existing = (filters.keywords as string[] | undefined) ?? []
+            filters.keywords = [targetSegment.industry, ...existing.filter(k => k !== targetSegment.industry)]
+          }
+        }
         // Auto-persist of seen domains: pull every domain already attached to this project
         // so re-runs of apollo_search never re-fetch the same companies, even after refresh.
         const { data: alreadySeen } = await supabase
