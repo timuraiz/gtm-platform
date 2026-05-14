@@ -7,10 +7,11 @@ import { updateProjectIcp, updateProjectOffer } from '@/app/actions/projects'
 import { scaleIn, springGentle } from '@/lib/animations'
 
 const FUNDING_ROUNDS = ['Pre-Seed', 'Seed', 'Series A', 'Series B', 'Series C+']
-const SENIORITY_OPTIONS = ['C-Suite', 'VP', 'Director', 'Head of', 'Manager', 'Senior IC']
+const SENIORITY_OPTIONS = ['C-Suite', 'VP', 'Director', 'Head of', 'Manager', 'Senior IC', 'Self-Employed']
 const SENIORITY_TO_APOLLO: Record<string, string> = {
   'C-Suite': 'c_suite', 'VP': 'vp', 'Director': 'director',
   'Head of': 'director', 'Manager': 'manager', 'Senior IC': 'senior',
+  'Self-Employed': 'owner',
 }
 const EMPLOYEE_RANGES = [
   { label: '1–10', value: '1,10' },

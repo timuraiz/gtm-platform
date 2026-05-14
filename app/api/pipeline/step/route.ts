@@ -62,6 +62,7 @@ const SENIORITY_LABEL_TO_APOLLO: Record<string, string> = {
   'Head of': 'director',
   'Manager': 'manager',
   'Senior IC': 'senior',
+  'Self-Employed': 'owner',
 }
 
 function resolveSeniorityToApollo(label: string): string | null {

@@ -38,7 +38,7 @@ function icpIndustries(icp: IcpRaw): string[] {
 // to run without one — so when the ICP is missing the field (e.g. AI
 // rewrote it and dropped seniority_levels), fall back to this canonical
 // list rather than letting the user create an incomplete iteration.
-const DEFAULT_SENIORITIES = ['C-Suite', 'VP', 'Director', 'Head of', 'Manager', 'Senior IC']
+const DEFAULT_SENIORITIES = ['C-Suite', 'VP', 'Director', 'Head of', 'Manager', 'Senior IC', 'Self-Employed']
 
 function icpSeniorities(icp: IcpRaw): string[] {
   if (Array.isArray(icp.seniority_levels) && (icp.seniority_levels as string[]).length)
