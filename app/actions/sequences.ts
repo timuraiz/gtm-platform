@@ -228,23 +228,6 @@ export async function deleteSequence(id: string): Promise<void> {
 
 export async function setSequenceApproval(id: string, approved: boolean): Promise<void> {
   const supabase = await createClient()
-  if (approved) {
-    const { data: seq } = await supabase
-      .from('sequences')
-      .select('project_id, channel')
-      .eq('id', id)
-      .single()
-    if (seq?.project_id && seq?.channel) {
-      await supabase
-        .from('sequences')
-        .update({ status: 'draft' })
-        .eq('project_id', seq.project_id)
-        .eq('channel', seq.channel)
-        .neq('id', id)
-    }
-    await supabase.from('sequences').update({ status: 'approved' }).eq('id', id)
-  } else {
-    await supabase.from('sequences').update({ status: 'draft' }).eq('id', id)
-  }
+  await supabase.from('sequences').update({ status: approved ? 'approved' : 'draft' }).eq('id', id)
   revalidatePath('.')
 }
