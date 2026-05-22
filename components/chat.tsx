@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ExternalLink, Link as LinkIcon, Check, Copy, Mail, Play, CircleCheck, CircleSlash, Circle, UserCheck } from 'lucide-react'
 import { ChannelIcon } from './channel-icon'
 import { fadeUp, blurIn, scaleIn, staggerContainer, springGentle, spring } from '@/lib/animations'
+import { getInitial } from '@/lib/initial'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ function ClientCard({ client }: { client: ClientData }) {
         <img src={client.logo_url} alt={client.name} className="size-8 rounded-lg object-contain" />
       ) : (
         <span className="size-8 rounded-lg bg-zinc-100 flex items-center justify-center text-sm font-bold text-zinc-500 shrink-0">
-          {client.name[0].toUpperCase()}
+          {getInitial(client.name)}
         </span>
       )}
       <div className="min-w-0">

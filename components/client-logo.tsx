@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { getInitial } from '@/lib/initial'
 
 export function ClientLogo({
   name,
@@ -22,7 +23,7 @@ export function ClientLogo({
   if (!logoUrl || failed) {
     return (
       <span className={`${sizeClass} rounded-lg bg-zinc-200 flex items-center justify-center font-semibold text-zinc-600 shrink-0 select-none`}>
-        {name[0].toUpperCase()}
+        {getInitial(name)}
       </span>
     )
   }

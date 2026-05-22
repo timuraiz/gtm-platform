@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { getInitial } from '@/lib/initial'
 
 export function CompanyAvatar({
   name,
@@ -18,7 +19,7 @@ export function CompanyAvatar({
   const [failed, setFailed] = useState(false)
 
   if (!candidate || failed) {
-    const initial = (name ?? domain ?? '?').trim().charAt(0).toUpperCase() || '?'
+    const initial = getInitial(name ?? domain)
     return (
       <span
         style={{ width: size, height: size, fontSize: Math.round(size * 0.55) }}

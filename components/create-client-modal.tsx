@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { createClient } from '@/app/actions/clients'
 import { modalOverlay, modalContent, springGentle } from '@/lib/animations'
+import { getInitial } from '@/lib/initial'
 
 function LogoPreview({ url, name }: { url: string; name: string }) {
   const [src, setSrc] = useState<string | null>(null)
@@ -33,7 +34,7 @@ function LogoPreview({ url, name }: { url: string; name: string }) {
   if (!src) {
     return (
       <div className="size-16 rounded-2xl bg-zinc-100 flex items-center justify-center text-2xl font-bold text-zinc-400 select-none">
-        {name ? name[0].toUpperCase() : '?'}
+        {getInitial(name)}
       </div>
     )
   }
