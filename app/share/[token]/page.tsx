@@ -10,7 +10,10 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
   if (!sequence) notFound()
 
   const [allSequences, context, contacts] = await Promise.all([
-    getSequences(sequence.project_id),
+    // Versions are scoped to the sequence's iteration — a project can hold
+    // sequences across several iterations, and the version switcher must not
+    // mix them. Legacy sequences with no iteration_id stay project-wide.
+    getSequences(sequence.project_id, sequence.iteration_id ?? undefined),
     getSequenceContext(sequence.project_id),
     sequence.iteration_id
       ? getContacts(sequence.project_id, sequence.iteration_id)
