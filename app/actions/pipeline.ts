@@ -182,11 +182,16 @@ export async function uploadContacts(
       .from('companies')
       .upsert(newCompanies, { onConflict: 'domain', ignoreDuplicates: true })
 
-    const { data: resolved } = await supabase
-      .from('companies')
-      .select('id, domain')
-      .in('domain', domains)
-    for (const c of resolved ?? []) domainToCompanyId[c.domain as string] = c.id as string
+    // Chunk .in() — a wide unique-domain set overflows the gateway URL limit
+    // (same cap as deleteContacts / detachCompanies).
+    const RESOLVE_CHUNK = 200
+    for (let i = 0; i < domains.length; i += RESOLVE_CHUNK) {
+      const { data: resolved } = await supabase
+        .from('companies')
+        .select('id, domain')
+        .in('domain', domains.slice(i, i + RESOLVE_CHUNK))
+      for (const c of resolved ?? []) domainToCompanyId[c.domain as string] = c.id as string
+    }
 
     // Attach to project via project_companies (source='csv' marks origin)
     const attachRows = Object.values(domainToCompanyId).map(company_id => ({

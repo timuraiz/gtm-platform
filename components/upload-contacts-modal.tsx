@@ -68,6 +68,7 @@ export function UploadContactsModal({
   const [parsed, setParsed] = useState<{ headers: string[]; rows: string[][] } | null>(null)
   const [mapping, setMapping] = useState<Record<FieldKey, number | null> | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{ inserted: number; skipped: number; blacklisted: number } | null>(null)
 
@@ -128,8 +129,20 @@ export function UploadContactsModal({
           custom_data: custom,
         }
       })
-      const res = await uploadContacts(projectId, iterationId, uploadRows)
-      setResult(res)
+      // Server Actions cap the request body at 1 MB — a wide CSV (lots of
+      // custom columns) blows past that in one shot. Chunk so each call stays
+      // small; the iteration_id,linkedin_url unique constraint still dedups
+      // across chunks.
+      const CHUNK = 200
+      const totals = { inserted: 0, skipped: 0, blacklisted: 0 }
+      for (let i = 0; i < uploadRows.length; i += CHUNK) {
+        const res = await uploadContacts(projectId, iterationId, uploadRows.slice(i, i + CHUNK))
+        totals.inserted += res.inserted
+        totals.skipped += res.skipped
+        totals.blacklisted += res.blacklisted
+        setProgress({ done: Math.min(i + CHUNK, uploadRows.length), total: uploadRows.length })
+      }
+      setResult(totals)
       router.refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed')
@@ -302,7 +315,9 @@ export function UploadContactsModal({
                 disabled={submitting}
                 className="flex items-center gap-1.5 rounded-lg bg-zinc-900 text-white px-4 py-1.5 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50 transition-colors"
               >
-                {submitting ? 'Importing…' : `Import ${parsed.rows.length} contacts`}
+                {submitting
+                  ? progress ? `Importing… ${progress.done}/${progress.total}` : 'Importing…'
+                  : `Import ${parsed.rows.length} contacts`}
               </button>
             </div>
           )}
