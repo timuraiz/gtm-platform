@@ -7,6 +7,7 @@ import { type Contact, deleteContact, deleteContacts } from '@/app/actions/pipel
 import { UploadContactsModal } from './upload-contacts-modal'
 import { CompanyAvatar } from './company-avatar'
 import { getInitial } from '@/lib/initial'
+import { toPublicLinkedinUrl } from '@/lib/linkedin'
 
 const PAGE_SIZE = 20
 
@@ -348,7 +349,7 @@ export function ContactsTable({
                       )}
                       {!isApolloId && (
                         <a
-                          href={c.linkedin_url}
+                          href={toPublicLinkedinUrl(c.linkedin_url) ?? c.linkedin_url}
                           target="_blank"
                           rel="noopener noreferrer"
                           title="Open LinkedIn profile"
