@@ -6,13 +6,15 @@ import { Search, Download, Mail, Trash2, ExternalLink, ChevronLeft, ChevronRight
 import { type Contact, deleteContact, deleteContacts } from '@/app/actions/pipeline'
 import { UploadContactsModal } from './upload-contacts-modal'
 import { CompanyAvatar } from './company-avatar'
+import { getInitial } from '@/lib/initial'
+import { toPublicLinkedinUrl } from '@/lib/linkedin'
 
 const PAGE_SIZE = 20
 
 function Avatar({ name }: { name: string }) {
   return (
     <div className="size-7 rounded-full bg-zinc-100 flex items-center justify-center text-[11px] font-semibold text-zinc-500 shrink-0">
-      {name.trim().charAt(0).toUpperCase() || '?'}
+      {getInitial(name)}
     </div>
   )
 }
@@ -347,7 +349,7 @@ export function ContactsTable({
                       )}
                       {!isApolloId && (
                         <a
-                          href={c.linkedin_url}
+                          href={toPublicLinkedinUrl(c.linkedin_url) ?? c.linkedin_url}
                           target="_blank"
                           rel="noopener noreferrer"
                           title="Open LinkedIn profile"
