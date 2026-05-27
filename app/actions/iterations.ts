@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 
+type Sentiment = 'positive' | 'negative' | 'neutral'
+
 export type IterationStatus = 'draft' | 'running' | 'finished' | 'discarded'
 
 export type IterationChannel = 'linkedin' | 'email'
@@ -26,6 +28,7 @@ export type Iteration = {
   stats_uploaded_at: string | null
   target_segment: TargetSegment | null
   linkedin_account_ids: string[]
+  external_campaign_name: string | null
 }
 
 export type IterationMetrics = {
@@ -44,10 +47,11 @@ export async function getIterations(projectId: string): Promise<Iteration[]> {
     .eq('project_id', projectId)
     .order('created_at', { ascending: true })
   return (data ?? []).map(row => {
-    const r = row as { iteration_accounts?: Array<{ linkedin_account_id: string }> } & Omit<Iteration, 'linkedin_account_ids'>
+    const r = row as { iteration_accounts?: Array<{ linkedin_account_id: string }>; external_campaign_name?: string | null } & Omit<Iteration, 'linkedin_account_ids' | 'external_campaign_name'>
     return {
       ...r,
       linkedin_account_ids: (r.iteration_accounts ?? []).map(a => a.linkedin_account_id),
+      external_campaign_name: r.external_campaign_name ?? null,
     } as Iteration
   })
 }
@@ -96,6 +100,20 @@ export async function setIterationChannel(id: string, channel: IterationChannel)
   if (channel !== 'linkedin') {
     await supabase.from('iteration_accounts').delete().eq('iteration_id', id)
   }
+  revalidatePath('.')
+}
+
+export async function setIterationExternalCampaignName(
+  id: string,
+  name: string | null,
+): Promise<void> {
+  const supabase = await createClient()
+  const trimmed = name?.trim() || null
+  const { error } = await supabase
+    .from('iterations')
+    .update({ external_campaign_name: trimmed })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath('.')
 }
 
@@ -255,7 +273,7 @@ export async function getClientStats(
   projectIds?: string[] | null,
 ): Promise<ClientStats> {
   const supabase = await createClient()
-  const [projectsRes, accountsRes, accountStatsRes] = await Promise.all([
+  const [projectsRes, accountsRes, accountStatsRes, repliesRes] = await Promise.all([
     supabase
       .from('projects')
       .select(`
@@ -278,6 +296,13 @@ export async function getClientStats(
       .from('iteration_account_stats')
       .select('iteration_id, linkedin_account_id, leads_sent, connections_accepted, replies, positive_replies, meetings_booked, linkedin_accounts!inner(client_id)')
       .eq('linkedin_accounts.client_id', clientId),
+    // Reply rows under this client (scoped via FK chain). Used to compute
+    // ground-truth replies/positive_replies counts when the user uses the
+    // inbound webhook instead of manual stat entry.
+    supabase
+      .from('replies')
+      .select('iteration_id, contact_li_url, sentiment, iterations!inner(project_id, projects!inner(client_id))')
+      .eq('iterations.projects.client_id', clientId),
   ])
   const projects = projectsRes.data
   const accounts = (accountsRes.data ?? []) as Array<{ id: string; name: string; profile_url: string | null; archived_at: string | null }>
@@ -299,6 +324,28 @@ export async function getClientStats(
     const arr = accountStatsByIteration.get(r.iteration_id) ?? []
     arr.push(r)
     accountStatsByIteration.set(r.iteration_id, arr)
+  }
+
+  // Aggregate replies into per-iteration counts of DISTINCT contacts. A
+  // contact is "positive" if any of their messages was classified positive.
+  // We only override iteration.stats when replies exist — otherwise we
+  // leave manual entry alone.
+  type ReplyRow = { iteration_id: string; contact_li_url: string; sentiment: Sentiment | null }
+  const replyRows = (repliesRes.data ?? []) as unknown as ReplyRow[]
+  const replyCountsByIteration = new Map<string, { replies: number; positive_replies: number }>()
+  {
+    const perIter = new Map<string, Map<string, boolean>>()
+    for (const r of replyRows) {
+      let contacts = perIter.get(r.iteration_id)
+      if (!contacts) { contacts = new Map(); perIter.set(r.iteration_id, contacts) }
+      const isPos = r.sentiment === 'positive'
+      contacts.set(r.contact_li_url, (contacts.get(r.contact_li_url) ?? false) || isPos)
+    }
+    for (const [iter, contacts] of perIter) {
+      let positive = 0
+      for (const v of contacts.values()) if (v) positive += 1
+      replyCountsByIteration.set(iter, { replies: contacts.size, positive_replies: positive })
+    }
   }
 
   // Date range filter on iteration.started_at — inclusive bounds
@@ -431,7 +478,7 @@ export async function getClientStats(
       // legacy/aggregate input and is intentionally ignored in that case
       // (the breakdown is canonical). Otherwise use the flat blob as-is.
       const breakdownRows = accountStatsByIteration.get(it.id)
-      const effectiveStats: IterationMetrics | null =
+      let effectiveStats: IterationMetrics | null =
         breakdownRows && breakdownRows.length > 0
           ? breakdownRows.reduce<IterationMetrics>((acc, r) => ({
               leads_sent: (acc.leads_sent ?? 0) + (r.leads_sent ?? 0),
@@ -441,6 +488,21 @@ export async function getClientStats(
               meetings_booked: (acc.meetings_booked ?? 0) + (r.meetings_booked ?? 0),
             }), { leads_sent: 0, connections_accepted: 0, replies: 0, positive_replies: 0, meetings_booked: 0 })
           : it.stats
+
+      // If we have replies recorded via the inbound webhook, those are the
+      // ground truth for replies / positive_replies. Override whatever the
+      // manual stats said. Other metrics (leads_sent, connections_accepted,
+      // meetings_booked) still come from manual entry — the webhook can't
+      // know those.
+      const fromReplies = replyCountsByIteration.get(it.id)
+      if (fromReplies) {
+        const base = effectiveStats ?? { leads_sent: null, connections_accepted: null, replies: null, positive_replies: null, meetings_booked: null }
+        effectiveStats = {
+          ...base,
+          replies: fromReplies.replies,
+          positive_replies: fromReplies.positive_replies,
+        }
+      }
 
       // Industry aggregation: prefer the iteration's target_segment.industry (the actual
       // narrow slice this iteration targeted). Fall back to project ICP industries only

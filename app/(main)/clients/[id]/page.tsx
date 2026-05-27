@@ -8,6 +8,7 @@ import { ClientLogo } from '@/components/client-logo'
 import { ClientPageTabs } from '@/components/client-page-tabs'
 import { ShareReportButton } from '@/components/share-report-button'
 import { ClientArchiveButton } from '@/components/client-archive-button'
+import { ClientTelegramChatField } from '@/components/client-telegram-chat-field'
 
 export default async function ClientPage({
   params,
@@ -57,6 +58,7 @@ export default async function ClientPage({
             </a>
           )}
         </div>
+        <ClientTelegramChatField clientId={id} value={client!.telegram_chat_id ?? null} />
         {shareToken && <ShareReportButton token={shareToken} />}
         <ClientArchiveButton clientId={id} archived={!!client!.archived_at} />
       </div>

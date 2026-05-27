@@ -16,6 +16,9 @@ import { SequenceBuilder } from '@/components/sequence-builder'
 import { ProjectShareButton } from '@/components/project-share-button'
 import { IterationSelector, FirstIterationPrompt } from '@/components/iteration-selector'
 import { IterationStats } from '@/components/iteration-stats'
+import { IterationReplies } from '@/components/iteration-replies'
+import { PositiveReplyCriteriaEditor } from '@/components/positive-reply-criteria-editor'
+import { getIterationReplies } from '@/app/actions/replies'
 
 export default async function ProjectPage({
   params,
@@ -37,7 +40,8 @@ export default async function ProjectPage({
   const loadSequences = tab === 'sequences'
 
   const loadStats = tab === 'stats'
-  const [project, runs, companiesCount, contactsCount, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies, linkedinAccounts, iterationAccountStats] = await Promise.all([
+  const loadReplies = tab === 'replies'
+  const [project, runs, companiesCount, contactsCount, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies, linkedinAccounts, iterationAccountStats, replies] = await Promise.all([
     getProject(projectId),
     getPipelineRuns(projectId),
     getProjectCompaniesCount(projectId),
@@ -50,6 +54,7 @@ export default async function ProjectPage({
     activeIteration && loadCompanies ? getProjectCompanies(projectId, activeIteration.id) : Promise.resolve([]),
     getLinkedinAccounts(clientId),
     activeIteration && loadStats ? getIterationAccountStats(activeIteration.id) : Promise.resolve([]),
+    activeIteration && loadReplies ? getIterationReplies(activeIteration.id) : Promise.resolve([]),
   ])
 
   if (!project) redirect(`/clients/${clientId}`)
@@ -80,11 +85,19 @@ export default async function ProjectPage({
       </div>
 
       {/* ICP editor */}
-      <div className="mb-6">
+      <div className="mb-4">
         <IcpEditor
           projectId={projectId}
           icp={project.icp_json as Record<string, unknown> | null}
           offerText={project.offer_text as string | null}
+        />
+      </div>
+
+      {/* Positive-reply criteria for AI sentiment */}
+      <div className="mb-6">
+        <PositiveReplyCriteriaEditor
+          projectId={projectId}
+          value={(project as { positive_reply_criteria?: string | null }).positive_reply_criteria ?? null}
         />
       </div>
 
@@ -101,6 +114,7 @@ export default async function ProjectPage({
               { key: 'contacts', label: `Contacts${contactsCount ? ` (${contactsCount})` : ''}` },
               { key: 'sequences', label: `Sequences${sequences.length ? ` (${sequences.length})` : ''}` },
               { key: 'stats', label: 'Stats' },
+              { key: 'replies', label: 'Replies' },
             ] as const).map(t => (
               <Link
                 key={t.key}
@@ -134,6 +148,8 @@ export default async function ProjectPage({
                 assignedAccountIds={activeIteration.linkedin_account_ids}
                 initialAccountStats={iterationAccountStats}
               />
+            ) : tab === 'replies' ? (
+              <IterationReplies replies={replies} accounts={linkedinAccounts} />
             ) : (
               <ProjectPipelineView projectId={projectId} iterationId={activeIteration.id} initialRuns={runs} icp={project.icp_json as Record<string, unknown> | null} />
             )}

@@ -2,8 +2,8 @@
 
 import { useState, useTransition, useRef, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, Layers, ChevronDown, Check, Circle, Play, CircleCheck, CircleSlash, Mail, UserCircle2 } from 'lucide-react'
-import { createIteration, setIterationStatus, setIterationAccounts, type Iteration, type IterationStatus, type IterationChannel, type TargetSegment } from '@/app/actions/iterations'
+import { Plus, Layers, ChevronDown, Check, Circle, Play, CircleCheck, CircleSlash, Mail, UserCircle2, Tag, Pencil, X } from 'lucide-react'
+import { createIteration, setIterationStatus, setIterationAccounts, setIterationExternalCampaignName, type Iteration, type IterationStatus, type IterationChannel, type TargetSegment } from '@/app/actions/iterations'
 import { type LinkedinAccount } from '@/app/actions/linkedin-accounts'
 import { ChannelIcon } from './channel-icon'
 
@@ -223,9 +223,84 @@ export function IterationSelector({
       </div>
       {active && <StatusDropdown iteration={active} />}
       {active && active.channel === 'linkedin' && (
-        <AccountDropdown iteration={active} accounts={linkedinAccounts} />
+        <>
+          <AccountDropdown iteration={active} accounts={linkedinAccounts} />
+          <CampaignNameField iteration={active} />
+        </>
       )}
     </div>
+  )
+}
+
+// ─── CampaignNameField ────────────────────────────────────────────────────────
+//
+// External campaign name (as labelled in the LinkedIn automation tool).
+// /api/replies/inbound matches incoming webhooks against this string +
+// the operator account to find which iteration owns the reply.
+
+function CampaignNameField({ iteration }: { iteration: Iteration }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(iteration.external_campaign_name ?? '')
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { setDraft(iteration.external_campaign_name ?? '') }, [iteration.id, iteration.external_campaign_name])
+
+  function commit() {
+    const next = draft.trim() || null
+    if (next === iteration.external_campaign_name) { setEditing(false); return }
+    startTransition(async () => {
+      await setIterationExternalCampaignName(iteration.id, next)
+      setEditing(false)
+      router.refresh()
+    })
+  }
+
+  if (editing) {
+    return (
+      <div ref={ref} className="flex items-center gap-1.5">
+        <Tag size={12} className="text-zinc-400" />
+        <input
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(iteration.external_campaign_name ?? ''); setEditing(false) } }}
+          placeholder="campaign name from LinkedIn tool"
+          className="text-xs px-2.5 py-1.5 border border-zinc-200 rounded-lg focus:outline-none focus:border-zinc-400 w-72 font-mono"
+        />
+        <button
+          onClick={commit}
+          disabled={pending}
+          className="p-1.5 text-zinc-400 hover:text-emerald-600 transition-colors disabled:opacity-50"
+          title="Save"
+        >
+          <Check size={14} />
+        </button>
+        <button
+          onClick={() => { setDraft(iteration.external_campaign_name ?? ''); setEditing(false) }}
+          className="p-1.5 text-zinc-400 hover:text-zinc-700 transition-colors"
+          title="Cancel"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    )
+  }
+
+  const has = !!iteration.external_campaign_name
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${has ? 'border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100/60' : 'border-dashed border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-600'}`}
+      title={has ? `Inbound webhooks with campaign_name="${iteration.external_campaign_name}" route here` : 'Bind to a campaign in your LinkedIn automation tool'}
+    >
+      <Tag size={11} strokeWidth={2.25} />
+      <span className={has ? 'font-mono max-w-[16rem] truncate' : ''}>
+        {iteration.external_campaign_name ?? 'Set campaign name'}
+      </span>
+      <Pencil size={10} className="opacity-50" />
+    </button>
   )
 }
 
