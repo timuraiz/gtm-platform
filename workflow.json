@@ -1,0 +1,149 @@
+{
+    "name": "Replies → platform → Telegram",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "reply",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2.1,
+            "position": [
+                -480,
+                0
+            ],
+            "id": "webhook-1",
+            "name": "Webhook",
+            "webhookId": "7bbeef0d-e21b-4469-a755-28536e90dcf0"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://YOUR-PLATFORM-DOMAIN/api/replies/inbound",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Webhook-Token",
+                            "value": "={{ $env.INBOUND_WEBHOOK_SECRET }}"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify($json.body) }}",
+                "options": {
+                    "timeout": 60000
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                -160,
+                0
+            ],
+            "id": "platform-1",
+            "name": "POST /api/replies/inbound"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "has-chat",
+                            "leftValue": "={{ $json.telegram_chat_id }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "string",
+                                "operation": "notEmpty"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                }
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.2,
+            "position": [
+                160,
+                0
+            ],
+            "id": "if-1",
+            "name": "Has TG chat?"
+        },
+        {
+            "parameters": {
+                "chatId": "={{ $json.telegram_chat_id }}",
+                "text": "={{\n  (function(){\n    const r=$json, wb=$('Webhook').item.json.body;\n    const e=r.sentiment==='positive'?'🟢':r.sentiment==='negative'?'🔴':'⚪';\n    const lbl=r.sentiment?`${e} ${r.sentiment[0].toUpperCase()}${r.sentiment.slice(1)}`:'⚪ unclassified';\n    const conf=r.sentiment_confidence!=null?` (${Math.round(r.sentiment_confidence*100)}%)`:'';\n    const reason=r.sentiment_reason?`\\n_${r.sentiment_reason}_`:'';\n    return [\n      `📩 *New reply — ${wb.campaign_name}*`,\n      `${lbl}${conf}${reason}`,\n      '',\n      `*${wb.full_name}* · ${wb.headline||''}`,\n      wb.current_company?`Company: ${wb.current_company}`:'',\n      wb.profile_url||'',\n      '',\n      `> ${wb.last_sent_message_text.replace(/\\n/g,'\\n> ')}`,\n      '',\n      `↪ to ${wb.my_full_name}`\n    ].filter(Boolean).join('\\n');\n  })()\n}}",
+                "additionalFields": {
+                    "appendAttribution": false,
+                    "parse_mode": "Markdown"
+                }
+            },
+            "type": "n8n-nodes-base.telegram",
+            "typeVersion": 1.2,
+            "position": [
+                480,
+                -80
+            ],
+            "id": "tg-1",
+            "name": "Send to Telegram",
+            "credentials": {
+                "telegramApi": {
+                    "id": "VvtF15XwfBomA2HI",
+                    "name": "Telegram account 2"
+                }
+            }
+        }
+    ],
+    "connections": {
+        "Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "POST /api/replies/inbound",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "POST /api/replies/inbound": {
+            "main": [
+                [
+                    {
+                        "node": "Has TG chat?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Has TG chat?": {
+            "main": [
+                [
+                    {
+                        "node": "Send to Telegram",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                []
+            ]
+        }
+    },
+    "active": true,
+    "settings": {
+        "executionOrder": "v1"
+    }
+}
