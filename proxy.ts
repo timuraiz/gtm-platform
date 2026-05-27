@@ -2,12 +2,13 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 const PUBLIC_PREFIXES = [
-  '/auth',           // sign-in flow
-  '/landing',        // marketing landing page
-  '/share',          // public review pages
+  '/auth',                 // sign-in flow
+  '/landing',              // marketing landing page
+  '/share',                // public review pages
   '/_next',
   '/favicon.ico',
   '/.well-known/workflow', // Workflow DevKit internal endpoints
+  '/api/replies/inbound',  // n8n webhook — auths via X-Webhook-Token
 ]
 
 export async function proxy(request: NextRequest) {
