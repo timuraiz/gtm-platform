@@ -9,6 +9,7 @@
 // Auth: header `X-Webhook-Token` must match env `INBOUND_WEBHOOK_SECRET`.
 
 import { NextResponse, type NextRequest } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { createServerClient } from '@supabase/ssr'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -219,6 +220,11 @@ export async function POST(req: NextRequest) {
     .select('telegram_chat_id, name')
     .eq('id', clientId)
     .single()
+
+  // Invalidate cached pages that read from replies / getClientStats so
+  // the funnel and Replies tab pick up this row on the next render.
+  revalidatePath(`/clients/${clientId}`)
+  revalidatePath(`/clients/${clientId}/projects/${iter.project_id}`)
 
   return NextResponse.json({
     ok: true,
