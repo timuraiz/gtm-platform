@@ -82,9 +82,17 @@ export function ContactsTable({
   const pageStart = (page - 1) * PAGE_SIZE
   const visible = filtered.slice(pageStart, pageStart + PAGE_SIZE)
 
+  // Export the current selection if any rows are ticked, otherwise fall
+  // back to everything that passes the current filter + search. This lets
+  // users grab a slice (eg. the top 50 by hand) instead of always
+  // exporting the whole iteration.
   function exportCsv() {
+    const target = selected.size > 0
+      ? filtered.filter(c => selected.has(c.id))
+      : filtered
+    if (target.length === 0) return
     const header = 'First Name,Last Name,Title,Email,LinkedIn,Company,Domain'
-    const rows = filtered.map(c =>
+    const rows = target.map(c =>
       [c.first_name, c.last_name, c.title, c.email, c.linkedin_url, c.company_name, c.company_domain]
         .map(v => `"${(v ?? '').replace(/"/g, '""')}"`)
         .join(',')
@@ -92,7 +100,7 @@ export function ContactsTable({
     const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = 'contacts.csv'
+    a.download = selected.size > 0 ? `contacts-${target.length}.csv` : 'contacts.csv'
     a.click()
   }
 
@@ -133,6 +141,17 @@ export function ContactsTable({
       else next.add(id)
       return next
     })
+  }
+
+  // Replace the current selection with the first N rows from the filtered
+  // list. Useful when the user wants "top 50" without manually ticking
+  // them across multiple pages.
+  function selectFirstN(n: number) {
+    if (!Number.isFinite(n) || n <= 0) { setSelected(new Set()); return }
+    const ids = filtered.slice(0, Math.floor(n)).map(c => c.id)
+    setSelected(new Set(ids))
+    // Jump to page 1 so the user can see what got selected.
+    setPage(1)
   }
 
   function toggleAll() {
@@ -219,6 +238,14 @@ export function ContactsTable({
           />
         </div>
         <span className="text-sm text-zinc-400">{filtered.length} of {contacts.length}</span>
+        {!readOnly && filtered.length > 0 && (
+          <SelectFirstNControl
+            max={filtered.length}
+            selectedCount={selected.size}
+            onPick={selectFirstN}
+            onClear={() => setSelected(new Set())}
+          />
+        )}
         {!readOnly && selected.size > 0 && (
           <button
             onClick={() => handleBulkDelete()}
@@ -254,10 +281,13 @@ export function ContactsTable({
             )}
             <button
               onClick={exportCsv}
+              title={selected.size > 0
+                ? `Download CSV with the ${selected.size} selected contact${selected.size === 1 ? '' : 's'}`
+                : `Download CSV with all ${filtered.length} filtered contact${filtered.length === 1 ? '' : 's'}`}
               className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors"
             >
               <Download size={13} />
-              Export CSV
+              {selected.size > 0 ? `Export ${selected.size}` : 'Export CSV'}
             </button>
           </div>
         )}
@@ -423,6 +453,56 @@ export function ContactsTable({
 
       {showUpload && projectId && iterationId && (
         <UploadContactsModal projectId={projectId} iterationId={iterationId} onClose={() => setShowUpload(false)} />
+      )}
+    </div>
+  )
+}
+
+// Quick "select first N from filtered list" control — sits in the toolbar
+// next to the row counter. Empty input + Enter clears selection.
+function SelectFirstNControl({
+  max,
+  selectedCount,
+  onPick,
+  onClear,
+}: {
+  max: number
+  selectedCount: number
+  onPick: (n: number) => void
+  onClear: () => void
+}) {
+  const [draft, setDraft] = useState('')
+  function apply() {
+    const n = Number(draft)
+    if (!Number.isFinite(n) || n <= 0) { onClear(); return }
+    onPick(Math.min(n, max))
+  }
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-xs text-zinc-400">Select first</span>
+      <input
+        type="number"
+        min={1}
+        max={max}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') apply() }}
+        placeholder={`max ${max}`}
+        className="w-20 px-2 py-1 text-xs rounded-lg border border-zinc-200 bg-white placeholder-zinc-300 focus:outline-none focus:border-zinc-400 tabular-nums"
+      />
+      <button
+        onClick={apply}
+        className="px-2.5 py-1 text-xs rounded-lg bg-zinc-900 text-white hover:bg-zinc-700 transition-colors"
+      >
+        Pick
+      </button>
+      {selectedCount > 0 && (
+        <button
+          onClick={() => { setDraft(''); onClear() }}
+          className="text-[11px] text-zinc-400 hover:text-zinc-700 transition-colors"
+        >
+          clear
+        </button>
       )}
     </div>
   )
