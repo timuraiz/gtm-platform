@@ -3,8 +3,13 @@
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Upload, X, FileText, Trash2, AlertCircle, BarChart3, Pencil, Check, Sparkles } from 'lucide-react'
-import { uploadIterationStats, clearIterationStats, type IterationMetrics } from '@/app/actions/iterations'
+import { Upload, X, FileText, Trash2, AlertCircle, BarChart3, Pencil, Check, Sparkles, Users } from 'lucide-react'
+import { uploadIterationStats, clearIterationStats, type IterationMetrics, type IterationChannel } from '@/app/actions/iterations'
+import {
+  setIterationAccountStats,
+  type LinkedinAccount,
+  type IterationAccountStats,
+} from '@/app/actions/linkedin-accounts'
 
 type MetricKey = keyof IterationMetrics
 
@@ -92,12 +97,20 @@ function autoSuggest(rows: ParsedRow[]): Record<MetricKey, Suggestion> {
 
 export function IterationStats({
   iterationId,
+  channel,
   initialStats,
   uploadedAt,
+  linkedinAccounts,
+  assignedAccountIds,
+  initialAccountStats,
 }: {
   iterationId: string
+  channel: IterationChannel
   initialStats: IterationMetrics | null
   uploadedAt: string | null
+  linkedinAccounts: LinkedinAccount[]
+  assignedAccountIds: string[]
+  initialAccountStats: IterationAccountStats[]
 }) {
   const router = useRouter()
   const [showUpload, setShowUpload] = useState(false)
@@ -105,6 +118,12 @@ export function IterationStats({
   const [draft, setDraft] = useState<IterationMetrics>(initialStats ?? emptyMetrics())
   const [saving, setSaving] = useState(false)
   const [clearing, setClearing] = useState(false)
+
+  // Split-by-account only makes sense for LinkedIn iterations that have at
+  // least one account assigned in the selector. Default-on when a breakdown
+  // already exists so the user lands on the right view.
+  const splitAvailable = channel === 'linkedin' && assignedAccountIds.length > 0
+  const [splitMode, setSplitMode] = useState(initialAccountStats.length > 0)
 
   async function handleSaveManual() {
     setSaving(true)
@@ -127,6 +146,18 @@ export function IterationStats({
 
   const hasAny = initialStats && METRICS.some(m => initialStats[m.key] !== null)
 
+  if (splitMode) {
+    return (
+      <AccountSplitStats
+        iterationId={iterationId}
+        accounts={linkedinAccounts}
+        assignedAccountIds={assignedAccountIds}
+        initialRows={initialAccountStats}
+        onLeaveSplitMode={() => setSplitMode(false)}
+      />
+    )
+  }
+
   if (!hasAny && !editing) {
     return (
       <>
@@ -136,7 +167,7 @@ export function IterationStats({
             <p className="text-sm">No stats yet</p>
             <p className="text-xs mt-1">Upload a CSV or enter metrics manually</p>
           </div>
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex gap-2 flex-wrap justify-center">
             <button
               onClick={() => setShowUpload(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-700 transition-colors"
@@ -151,6 +182,15 @@ export function IterationStats({
               <Pencil size={12} />
               Enter manually
             </button>
+            {splitAvailable && (
+              <button
+                onClick={() => setSplitMode(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors"
+              >
+                <Users size={12} />
+                Split by account
+              </button>
+            )}
           </div>
         </div>
         {showUpload && (
@@ -169,6 +209,15 @@ export function IterationStats({
         <div className="flex items-center gap-1.5">
           {!editing && (
             <>
+              {splitAvailable && (
+                <button
+                  onClick={() => setSplitMode(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors"
+                >
+                  <Users size={12} />
+                  Split by account
+                </button>
+              )}
               <button
                 onClick={() => { setDraft(initialStats ?? emptyMetrics()); setEditing(true) }}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors"
@@ -522,5 +571,199 @@ function UploadStatsModal({ iterationId, currentStats, onClose }: { iterationId:
         </motion.div>
       </motion.div>
     </AnimatePresence>
+  )
+}
+
+// ─── AccountSplitStats ────────────────────────────────────────────────────────
+//
+// Per-account breakdown editor for a single iteration. When the user saves
+// rows with any non-null metric, getClientStats attributes them to the
+// account; the iteration-level stats blob is ignored for the leaderboard.
+// Saving an empty grid clears the breakdown — iteration falls back to the
+// flat stats path.
+
+type SplitRow = Record<string, IterationMetrics & { _changed?: boolean }>
+
+function AccountSplitStats({
+  iterationId,
+  accounts,
+  assignedAccountIds,
+  initialRows,
+  onLeaveSplitMode,
+}: {
+  iterationId: string
+  accounts: LinkedinAccount[]
+  assignedAccountIds: string[]
+  initialRows: IterationAccountStats[]
+  onLeaveSplitMode: () => void
+}) {
+  const router = useRouter()
+  // Show only accounts assigned to this iteration via the picker, plus any
+  // account that already carries data for this iteration (otherwise we'd
+  // silently drop pre-existing numbers when an account gets unassigned).
+  const activeAccounts = useMemo(() => {
+    const assigned = new Set(assignedAccountIds)
+    const haveData = new Set(initialRows.map(r => r.linkedin_account_id))
+    return accounts.filter(a => assigned.has(a.id) || haveData.has(a.id))
+  }, [accounts, assignedAccountIds, initialRows])
+
+  const initial: SplitRow = useMemo(() => {
+    const out: SplitRow = {}
+    for (const a of activeAccounts) {
+      const row = initialRows.find(r => r.linkedin_account_id === a.id)
+      out[a.id] = {
+        leads_sent: row?.leads_sent ?? null,
+        connections_accepted: row?.connections_accepted ?? null,
+        replies: row?.replies ?? null,
+        positive_replies: row?.positive_replies ?? null,
+        meetings_booked: row?.meetings_booked ?? null,
+      }
+    }
+    return out
+  }, [activeAccounts, initialRows])
+
+  const [rows, setRows] = useState<SplitRow>(initial)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function update(accountId: string, key: keyof IterationMetrics, value: string) {
+    const num = value === '' ? null : Number(value)
+    setRows(prev => ({
+      ...prev,
+      [accountId]: { ...prev[accountId], [key]: Number.isFinite(num as number) ? num : null },
+    }))
+  }
+
+  const totals = useMemo(() => {
+    const t: Record<keyof IterationMetrics, number> = { leads_sent: 0, connections_accepted: 0, replies: 0, positive_replies: 0, meetings_booked: 0 }
+    for (const a of activeAccounts) {
+      const r = rows[a.id]
+      if (!r) continue
+      for (const m of METRICS) t[m.key] += r[m.key] ?? 0
+    }
+    return t
+  }, [rows, activeAccounts])
+
+  async function save() {
+    setSaving(true)
+    setError(null)
+    try {
+      const payload = activeAccounts.map(a => ({
+        linkedin_account_id: a.id,
+        ...rows[a.id],
+      }))
+      await setIterationAccountStats(iterationId, payload)
+      router.refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (activeAccounts.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-zinc-400 gap-3">
+        <Users size={28} className="text-zinc-300" />
+        <p className="text-sm">No accounts assigned to this iteration</p>
+        <p className="text-xs">Pick the operator accounts from the iteration header first.</p>
+        <button
+          onClick={onLeaveSplitMode}
+          className="mt-2 text-xs text-zinc-500 hover:text-zinc-800 transition-colors"
+        >
+          Back to aggregate view
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Users size={14} className="text-zinc-500" />
+          <p className="text-sm font-medium text-zinc-700">Stats by account</p>
+          <p className="text-xs text-zinc-400">Iteration-level stats are ignored when a breakdown is set</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onLeaveSplitMode}
+            className="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-700 transition-colors"
+          >
+            Back to aggregate
+          </button>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="flex items-center gap-1.5 rounded-lg bg-zinc-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+          >
+            <Check size={12} />
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-zinc-100 bg-white">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-zinc-50/50 border-b border-zinc-100">
+              <th className="text-left px-4 py-2.5 text-[11px] font-medium text-zinc-500 uppercase tracking-wide sticky left-0 bg-zinc-50/50">Account</th>
+              {METRICS.map(m => (
+                <th key={m.key} className="text-right px-3 py-2.5 text-[11px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">
+                  {m.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {activeAccounts.map(a => (
+              <tr key={a.id} className="border-b border-zinc-50 last:border-0 hover:bg-zinc-50/30 transition-colors">
+                <td className="px-4 py-2.5 text-zinc-800 sticky left-0 bg-white">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium">{a.name}</span>
+                    {a.archived_at && (
+                      <span className="text-[10px] uppercase tracking-wider text-zinc-400 border border-zinc-200 rounded px-1.5 py-0.5">
+                        Archived
+                      </span>
+                    )}
+                  </div>
+                </td>
+                {METRICS.map(m => (
+                  <td key={m.key} className="px-2 py-2 text-right">
+                    <input
+                      type="number"
+                      min={0}
+                      value={rows[a.id]?.[m.key] ?? ''}
+                      onChange={e => update(a.id, m.key, e.target.value)}
+                      placeholder="—"
+                      className="w-20 text-right text-sm tabular-nums text-zinc-900 placeholder:text-zinc-300 px-2 py-1 border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-zinc-400"
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+            <tr className="bg-zinc-50/40 font-medium">
+              <td className="px-4 py-2.5 text-zinc-500 text-xs uppercase tracking-wider sticky left-0 bg-zinc-50/40">Total</td>
+              {METRICS.map(m => (
+                <td key={m.key} className="px-3 py-2.5 text-right text-sm tabular-nums text-zinc-700">
+                  {totals[m.key] || '—'}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-lg bg-red-50 text-red-700 px-3 py-2 text-xs">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      <p className="text-[11px] text-zinc-400">
+        Leave every cell empty for an account to remove its row. Save with all cells empty to wipe the breakdown.
+      </p>
+    </div>
   )
 }

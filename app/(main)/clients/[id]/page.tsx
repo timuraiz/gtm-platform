@@ -3,10 +3,12 @@ import { getClient, getClientShareToken } from '@/app/actions/clients'
 import { getProjects } from '@/app/actions/projects'
 import { getClientStats } from '@/app/actions/iterations'
 import { getBlacklist } from '@/app/actions/blacklist'
+import { getLinkedinAccounts } from '@/app/actions/linkedin-accounts'
 import { ClientLogo } from '@/components/client-logo'
 import { ClientPageTabs } from '@/components/client-page-tabs'
 import { ShareReportButton } from '@/components/share-report-button'
 import { ClientArchiveButton } from '@/components/client-archive-button'
+import { ClientTelegramChatField } from '@/components/client-telegram-chat-field'
 
 export default async function ClientPage({
   params,
@@ -18,14 +20,15 @@ export default async function ClientPage({
   const { id } = await params
   const { from, to, projects: projectsParam } = await searchParams
   const selectedProjectIds = projectsParam ? projectsParam.split(',').filter(Boolean) : null
-  let client, projects, stats, shareToken, blacklist
+  let client, projects, stats, shareToken, blacklist, linkedinAccounts
   try {
-    ;[client, projects, stats, shareToken, blacklist] = await Promise.all([
+    ;[client, projects, stats, shareToken, blacklist, linkedinAccounts] = await Promise.all([
       getClient(id),
       getProjects(id),
       getClientStats(id, from ?? null, to ?? null, selectedProjectIds),
       getClientShareToken(id),
       getBlacklist(id),
+      getLinkedinAccounts(id, { includeArchived: true }),
     ])
   } catch {
     redirect('/')
@@ -55,6 +58,7 @@ export default async function ClientPage({
             </a>
           )}
         </div>
+        <ClientTelegramChatField clientId={id} value={client!.telegram_chat_id ?? null} />
         {shareToken && <ShareReportButton token={shareToken} />}
         <ClientArchiveButton clientId={id} archived={!!client!.archived_at} />
       </div>
@@ -69,6 +73,7 @@ export default async function ClientPage({
         statsRange={{ from: from ?? null, to: to ?? null }}
         statsProjectIds={selectedProjectIds ?? []}
         blacklist={blacklist!}
+        linkedinAccounts={linkedinAccounts!}
       />
     </div>
   )

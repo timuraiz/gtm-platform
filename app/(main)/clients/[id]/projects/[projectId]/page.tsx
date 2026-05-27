@@ -4,6 +4,7 @@ import { getProject, getPipelineRuns, getContacts, getContactsCount, getIteratio
 import { getProjectCompanies, getProjectCompaniesCount } from '@/app/actions/companies'
 import { getSequences, getProjectCaseStudies, getProjectShareToken } from '@/app/actions/sequences'
 import { getIterations } from '@/app/actions/iterations'
+import { getLinkedinAccounts, getIterationAccountStats } from '@/app/actions/linkedin-accounts'
 import { ProjectPipelineView } from '@/components/project-pipeline-view'
 import { ClientLogo } from '@/components/client-logo'
 import { IcpEditor } from '@/components/icp-editor'
@@ -15,6 +16,9 @@ import { SequenceBuilder } from '@/components/sequence-builder'
 import { ProjectShareButton } from '@/components/project-share-button'
 import { IterationSelector, FirstIterationPrompt } from '@/components/iteration-selector'
 import { IterationStats } from '@/components/iteration-stats'
+import { IterationReplies } from '@/components/iteration-replies'
+import { PositiveReplyCriteriaEditor } from '@/components/positive-reply-criteria-editor'
+import { getIterationReplies } from '@/app/actions/replies'
 
 export default async function ProjectPage({
   params,
@@ -35,7 +39,9 @@ export default async function ProjectPage({
   const loadContacts = tab === 'contacts' || tab === 'sequences'
   const loadSequences = tab === 'sequences'
 
-  const [project, runs, companiesCount, contactsCount, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies] = await Promise.all([
+  const loadStats = tab === 'stats'
+  const loadReplies = tab === 'replies'
+  const [project, runs, companiesCount, contactsCount, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies, linkedinAccounts, iterationAccountStats, replies] = await Promise.all([
     getProject(projectId),
     getPipelineRuns(projectId),
     getProjectCompaniesCount(projectId),
@@ -46,6 +52,9 @@ export default async function ProjectPage({
     getProjectShareToken(projectId),
     activeIteration ? getIterationCustomColumns(projectId, activeIteration.id) : Promise.resolve([] as string[]),
     activeIteration && loadCompanies ? getProjectCompanies(projectId, activeIteration.id) : Promise.resolve([]),
+    getLinkedinAccounts(clientId),
+    activeIteration && loadStats ? getIterationAccountStats(activeIteration.id) : Promise.resolve([]),
+    activeIteration && loadReplies ? getIterationReplies(activeIteration.id) : Promise.resolve([]),
   ])
 
   if (!project) redirect(`/clients/${clientId}`)
@@ -76,11 +85,19 @@ export default async function ProjectPage({
       </div>
 
       {/* ICP editor */}
-      <div className="mb-6">
+      <div className="mb-4">
         <IcpEditor
           projectId={projectId}
           icp={project.icp_json as Record<string, unknown> | null}
           offerText={project.offer_text as string | null}
+        />
+      </div>
+
+      {/* Positive-reply criteria for AI sentiment */}
+      <div className="mb-6">
+        <PositiveReplyCriteriaEditor
+          projectId={projectId}
+          value={(project as { positive_reply_criteria?: string | null }).positive_reply_criteria ?? null}
         />
       </div>
 
@@ -89,7 +106,7 @@ export default async function ProjectPage({
       ) : (
         <>
           {/* Iterations + tabs — fixed in document position, no sticky */}
-          <IterationSelector iterations={iterations} activeId={activeIteration.id} projectId={projectId} icp={project.icp_json as Record<string, unknown> | null} />
+          <IterationSelector iterations={iterations} activeId={activeIteration.id} projectId={projectId} icp={project.icp_json as Record<string, unknown> | null} linkedinAccounts={linkedinAccounts} />
           <div className="border-b border-zinc-100 mb-6 flex gap-1">
             {([
               { key: 'pipeline', label: 'Pipeline' },
@@ -97,6 +114,7 @@ export default async function ProjectPage({
               { key: 'contacts', label: `Contacts${contactsCount ? ` (${contactsCount})` : ''}` },
               { key: 'sequences', label: `Sequences${sequences.length ? ` (${sequences.length})` : ''}` },
               { key: 'stats', label: 'Stats' },
+              { key: 'replies', label: 'Replies' },
             ] as const).map(t => (
               <Link
                 key={t.key}
@@ -121,7 +139,17 @@ export default async function ProjectPage({
             ) : tab === 'sequences' ? (
               <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} iterationId={activeIteration.id} iterationChannel={activeIteration.channel} iterationSegment={activeIteration.target_segment} customColumns={customColumns} />
             ) : tab === 'stats' ? (
-              <IterationStats iterationId={activeIteration.id} initialStats={activeIteration.stats ?? null} uploadedAt={activeIteration.stats_uploaded_at ?? null} />
+              <IterationStats
+                iterationId={activeIteration.id}
+                channel={activeIteration.channel}
+                initialStats={activeIteration.stats ?? null}
+                uploadedAt={activeIteration.stats_uploaded_at ?? null}
+                linkedinAccounts={linkedinAccounts}
+                assignedAccountIds={activeIteration.linkedin_account_ids}
+                initialAccountStats={iterationAccountStats}
+              />
+            ) : tab === 'replies' ? (
+              <IterationReplies replies={replies} accounts={linkedinAccounts} />
             ) : (
               <ProjectPipelineView projectId={projectId} iterationId={activeIteration.id} initialRuns={runs} icp={project.icp_json as Record<string, unknown> | null} />
             )}

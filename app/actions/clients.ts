@@ -18,6 +18,7 @@ export type Client = {
   logo_url: string | null
   case_studies: CaseStudy[]
   case_studies_scraped_at: string | null
+  telegram_chat_id: string | null
   created_at: string
   archived_at: string | null
   projects?: { id: string }[]
@@ -119,6 +120,17 @@ export async function archiveClient(id: string): Promise<void> {
     .eq('id', id)
   if (error) throw new Error(error.message)
   revalidatePath('/')
+  revalidatePath(`/clients/${id}`)
+}
+
+export async function setClientTelegramChatId(id: string, chatId: string | null): Promise<void> {
+  const supabase = await createSupabase()
+  const trimmed = chatId?.trim() || null
+  const { error } = await supabase
+    .from('clients')
+    .update({ telegram_chat_id: trimmed })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath(`/clients/${id}`)
 }
 

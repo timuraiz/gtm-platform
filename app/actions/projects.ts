@@ -17,6 +17,7 @@ export type Project = {
   name: string
   offer_text: string | null
   icp_json: IcpJson | null
+  positive_reply_criteria: string | null
   created_at: string
 }
 
@@ -45,6 +46,20 @@ export async function updateProjectIcp(projectId: string, icp: Record<string, un
 export async function updateProjectOffer(projectId: string, offerText: string): Promise<void> {
   const supabase = await createSupabase()
   const { error } = await supabase.from('projects').update({ offer_text: offerText }).eq('id', projectId)
+  if (error) throw new Error(error.message)
+  revalidatePath('/', 'layout')
+}
+
+export async function updateProjectPositiveReplyCriteria(
+  projectId: string,
+  criteria: string | null,
+): Promise<void> {
+  const supabase = await createSupabase()
+  const trimmed = criteria?.trim() || null
+  const { error } = await supabase
+    .from('projects')
+    .update({ positive_reply_criteria: trimmed })
+    .eq('id', projectId)
   if (error) throw new Error(error.message)
   revalidatePath('/', 'layout')
 }

@@ -6,13 +6,15 @@ import { type Project } from '@/app/actions/projects'
 import { type CaseStudy } from '@/app/actions/clients'
 import { type ClientStats } from '@/app/actions/iterations'
 import { type BlacklistEntry } from '@/app/actions/blacklist'
+import { type LinkedinAccount } from '@/app/actions/linkedin-accounts'
 import { ClientProjects } from './client-projects'
 import { CaseStudiesPanel } from './case-studies-panel'
 import { ClientStatsPanel } from './client-stats-panel'
 import { BlacklistPanel } from './blacklist-panel'
+import { LinkedinAccountsPanel } from './linkedin-accounts-panel'
 import { fadeUp, springGentle } from '@/lib/animations'
 
-type Tab = 'projects' | 'stats' | 'social_proof' | 'blacklist'
+type Tab = 'projects' | 'stats' | 'social_proof' | 'blacklist' | 'accounts'
 
 export function ClientPageTabs({
   clientId,
@@ -24,6 +26,7 @@ export function ClientPageTabs({
   statsRange,
   statsProjectIds,
   blacklist,
+  linkedinAccounts,
 }: {
   clientId: string
   websiteUrl: string | null
@@ -34,14 +37,17 @@ export function ClientPageTabs({
   statsRange: { from: string | null; to: string | null }
   statsProjectIds: string[]
   blacklist: BlacklistEntry[]
+  linkedinAccounts: LinkedinAccount[]
 }) {
   const [tab, setTab] = useState<Tab>('projects')
 
   const totalIterations = stats.linkedin.iterations + stats.email.iterations
+  const activeAccountsCount = linkedinAccounts.filter(a => !a.archived_at).length
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: 'projects', label: 'Projects', count: projects.length },
     { id: 'stats', label: 'Stats', count: totalIterations || undefined },
+    { id: 'accounts', label: 'LinkedIn Accounts', count: activeAccountsCount || undefined },
     { id: 'social_proof', label: 'Social Proof', count: caseStudies.length || undefined },
     { id: 'blacklist', label: 'Blacklist', count: blacklist.length || undefined },
   ]
@@ -120,6 +126,19 @@ export function ClientPageTabs({
               initialCaseStudies={caseStudies}
               scrapedAt={caseStudiesScrapedAt}
             />
+          </motion.div>
+        )}
+
+        {tab === 'accounts' && (
+          <motion.div
+            key="accounts"
+            variants={fadeUp}
+            initial="hidden"
+            animate="show"
+            exit={{ opacity: 0, transition: { duration: 0.1 } }}
+            transition={springGentle}
+          >
+            <LinkedinAccountsPanel clientId={clientId} initialAccounts={linkedinAccounts} />
           </motion.div>
         )}
 

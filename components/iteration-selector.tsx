@@ -2,8 +2,9 @@
 
 import { useState, useTransition, useRef, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, Layers, ChevronDown, Check, Circle, Play, CircleCheck, CircleSlash, Mail } from 'lucide-react'
-import { createIteration, setIterationStatus, type Iteration, type IterationStatus, type IterationChannel, type TargetSegment } from '@/app/actions/iterations'
+import { Plus, Layers, ChevronDown, Check, Circle, Play, CircleCheck, CircleSlash, Mail, UserCircle2, Tag, Pencil, X } from 'lucide-react'
+import { createIteration, setIterationStatus, setIterationAccounts, setIterationExternalCampaignName, type Iteration, type IterationStatus, type IterationChannel, type TargetSegment } from '@/app/actions/iterations'
+import { type LinkedinAccount } from '@/app/actions/linkedin-accounts'
 import { ChannelIcon } from './channel-icon'
 
 const STATUSES: { key: IterationStatus; label: string; tone: string; dot: string; icon: typeof Circle }[] = [
@@ -164,11 +165,13 @@ export function IterationSelector({
   activeId,
   projectId,
   icp,
+  linkedinAccounts,
 }: {
   iterations: Iteration[]
   activeId: string
   projectId: string
   icp: IcpRaw | null
+  linkedinAccounts: LinkedinAccount[]
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -219,6 +222,214 @@ export function IterationSelector({
         <NewIterationButton projectId={projectId} icp={icp} onCreated={switchTo} disabled={pending} />
       </div>
       {active && <StatusDropdown iteration={active} />}
+      {active && active.channel === 'linkedin' && (
+        <>
+          <AccountDropdown iteration={active} accounts={linkedinAccounts} />
+          <CampaignNameField iteration={active} />
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── CampaignNameField ────────────────────────────────────────────────────────
+//
+// External campaign name (as labelled in the LinkedIn automation tool).
+// /api/replies/inbound matches incoming webhooks against this string +
+// the operator account to find which iteration owns the reply.
+
+function CampaignNameField({ iteration }: { iteration: Iteration }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(iteration.external_campaign_name ?? '')
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { setDraft(iteration.external_campaign_name ?? '') }, [iteration.id, iteration.external_campaign_name])
+
+  function commit() {
+    const next = draft.trim() || null
+    if (next === iteration.external_campaign_name) { setEditing(false); return }
+    startTransition(async () => {
+      await setIterationExternalCampaignName(iteration.id, next)
+      setEditing(false)
+      router.refresh()
+    })
+  }
+
+  if (editing) {
+    return (
+      <div ref={ref} className="flex items-center gap-1.5">
+        <Tag size={12} className="text-zinc-400" />
+        <input
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(iteration.external_campaign_name ?? ''); setEditing(false) } }}
+          placeholder="campaign name from LinkedIn tool"
+          className="text-xs px-2.5 py-1.5 border border-zinc-200 rounded-lg focus:outline-none focus:border-zinc-400 w-72 font-mono"
+        />
+        <button
+          onClick={commit}
+          disabled={pending}
+          className="p-1.5 text-zinc-400 hover:text-emerald-600 transition-colors disabled:opacity-50"
+          title="Save"
+        >
+          <Check size={14} />
+        </button>
+        <button
+          onClick={() => { setDraft(iteration.external_campaign_name ?? ''); setEditing(false) }}
+          className="p-1.5 text-zinc-400 hover:text-zinc-700 transition-colors"
+          title="Cancel"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    )
+  }
+
+  const has = !!iteration.external_campaign_name
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${has ? 'border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100/60' : 'border-dashed border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-600'}`}
+      title={has ? `Inbound webhooks with campaign_name="${iteration.external_campaign_name}" route here` : 'Bind to a campaign in your LinkedIn automation tool'}
+    >
+      <Tag size={11} strokeWidth={2.25} />
+      <span className={has ? 'font-mono max-w-[16rem] truncate' : ''}>
+        {iteration.external_campaign_name ?? 'Set campaign name'}
+      </span>
+      <Pencil size={10} className="opacity-50" />
+    </button>
+  )
+}
+
+// ─── AccountDropdown ──────────────────────────────────────────────────────────
+//
+// Multi-select: one iteration can be run from several LinkedIn accounts at
+// once. Changes are batched in local state and committed on close (or when
+// the user clicks Apply) so we don't fire a server action per checkbox.
+
+function AccountDropdown({ iteration, accounts }: { iteration: Iteration; accounts: LinkedinAccount[] }) {
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [pending, startTransition] = useTransition()
+  const ref = useRef<HTMLDivElement>(null)
+  // Include archived accounts only if they're already selected on this
+  // iteration — otherwise hide them so the dropdown stays clean.
+  const visibleAccounts = accounts.filter(a => !a.archived_at || iteration.linkedin_account_ids.includes(a.id))
+  const selectedById = new Map(accounts.map(a => [a.id, a]))
+  const selected = iteration.linkedin_account_ids
+    .map(id => selectedById.get(id))
+    .filter((a): a is LinkedinAccount => !!a)
+  const [draft, setDraft] = useState<string[]>(iteration.linkedin_account_ids)
+
+  // Re-sync if the iteration switches under us
+  useEffect(() => { setDraft(iteration.linkedin_account_ids) }, [iteration.id, iteration.linkedin_account_ids])
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        commit()
+        setOpen(false)
+      }
+    }
+    if (open) document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, draft])
+
+  function toggle(id: string) {
+    setDraft(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  function commit() {
+    const sortedDraft = [...draft].sort()
+    const sortedCurrent = [...iteration.linkedin_account_ids].sort()
+    if (sortedDraft.join(',') === sortedCurrent.join(',')) return
+    startTransition(async () => {
+      await setIterationAccounts(iteration.id, draft)
+      router.refresh()
+    })
+  }
+
+  // Label: "Tim", "Tim + Alex", "Tim + 2 more", or "No accounts"
+  const label = selected.length === 0
+    ? 'No accounts'
+    : selected.length === 1
+      ? selected[0].name
+      : selected.length === 2
+        ? `${selected[0].name} + ${selected[1].name}`
+        : `${selected[0].name} + ${selected.length - 1} more`
+
+  const isAttributed = selected.length > 0
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        disabled={pending}
+        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${isAttributed ? 'border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100/70' : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50'}`}
+        title={isAttributed ? `Run from ${selected.map(a => a.name).join(', ')}` : 'No account attribution'}
+      >
+        <UserCircle2 size={12} strokeWidth={2.25} />
+        {label}
+        <ChevronDown size={11} className={isAttributed ? 'text-blue-400' : 'text-zinc-400'} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1.5 z-30 w-64 rounded-xl border border-zinc-100 bg-white shadow-lg overflow-hidden">
+          <div className="px-3 py-2 border-b border-zinc-50 flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-400 font-medium">Run from</span>
+            {draft.length > 0 && (
+              <button
+                onClick={() => setDraft([])}
+                className="text-[10px] text-zinc-400 hover:text-zinc-700 transition-colors"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          {visibleAccounts.length === 0 ? (
+            <div className="px-3 py-3 text-xs text-zinc-400">
+              No accounts yet. Add them on the client&apos;s LinkedIn Accounts tab.
+            </div>
+          ) : (
+            <div className="max-h-64 overflow-y-auto py-1">
+              {visibleAccounts.map(a => {
+                const checked = draft.includes(a.id)
+                return (
+                  <label
+                    key={a.id}
+                    className={`flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-zinc-50 transition-colors ${a.archived_at ? 'opacity-60' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(a.id)}
+                      className="size-3.5 rounded accent-zinc-900 cursor-pointer"
+                    />
+                    <UserCircle2 size={12} className="text-zinc-400 shrink-0" />
+                    <span className="flex-1 truncate text-zinc-700">{a.name}</span>
+                    {a.archived_at && (
+                      <span className="text-[9px] uppercase tracking-wider text-zinc-400">archived</span>
+                    )}
+                  </label>
+                )
+              })}
+            </div>
+          )}
+          <div className="px-3 py-2 border-t border-zinc-50 flex items-center justify-end">
+            <button
+              onClick={() => { commit(); setOpen(false) }}
+              disabled={pending}
+              className="flex items-center gap-1.5 rounded-lg bg-zinc-900 text-white text-xs font-medium px-3 py-1 hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+            >
+              <Check size={11} />
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
