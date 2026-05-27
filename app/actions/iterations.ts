@@ -25,6 +25,7 @@ export type Iteration = {
   stats: IterationMetrics | null
   stats_uploaded_at: string | null
   target_segment: TargetSegment | null
+  linkedin_account_ids: string[]
 }
 
 export type IterationMetrics = {
@@ -39,10 +40,16 @@ export async function getIterations(projectId: string): Promise<Iteration[]> {
   const supabase = await createClient()
   const { data } = await supabase
     .from('iterations')
-    .select('*')
+    .select('*, iteration_accounts(linkedin_account_id)')
     .eq('project_id', projectId)
     .order('created_at', { ascending: true })
-  return (data ?? []) as Iteration[]
+  return (data ?? []).map(row => {
+    const r = row as { iteration_accounts?: Array<{ linkedin_account_id: string }> } & Omit<Iteration, 'linkedin_account_ids'>
+    return {
+      ...r,
+      linkedin_account_ids: (r.iteration_accounts ?? []).map(a => a.linkedin_account_id),
+    } as Iteration
+  })
 }
 
 export async function createIteration(
@@ -84,6 +91,33 @@ export async function deleteIteration(id: string): Promise<void> {
 export async function setIterationChannel(id: string, channel: IterationChannel): Promise<void> {
   const supabase = await createClient()
   await supabase.from('iterations').update({ channel }).eq('id', id)
+  // Switching away from LinkedIn drops account attribution so the leaderboard
+  // doesn't credit an email iteration to a LinkedIn account.
+  if (channel !== 'linkedin') {
+    await supabase.from('iteration_accounts').delete().eq('iteration_id', id)
+  }
+  revalidatePath('.')
+}
+
+// Replace the set of LinkedIn accounts attributed to an iteration. Passing
+// an empty array clears the attribution.
+export async function setIterationAccounts(
+  iterationId: string,
+  accountIds: string[],
+): Promise<void> {
+  const supabase = await createClient()
+  const uniq = Array.from(new Set(accountIds))
+  const { error: delErr } = await supabase
+    .from('iteration_accounts')
+    .delete()
+    .eq('iteration_id', iterationId)
+  if (delErr) throw new Error(delErr.message)
+  if (uniq.length > 0) {
+    const { error: insErr } = await supabase
+      .from('iteration_accounts')
+      .insert(uniq.map(id => ({ iteration_id: iterationId, linkedin_account_id: id })))
+    if (insErr) throw new Error(insErr.message)
+  }
   revalidatePath('.')
 }
 
@@ -169,9 +203,27 @@ export type ClientStats = {
   }>
   top_industries: { linkedin: GroupRow[]; email: GroupRow[] }
   top_roles: { linkedin: GroupRow[]; email: GroupRow[] }
+  top_linkedin_accounts: AccountLeaderboardRow[]
+  // Number of LinkedIn iterations that have multiple assigned accounts but no
+  // per-account breakdown — we refuse to guess how their stats split, so they
+  // sit out of the leaderboard. Surface this so the user knows what's missing.
+  linkedin_unattributed_iterations: number
 }
 
 export type GroupRow = { name: string; iterations: number; leads_sent: number; replies: number; meetings_booked: number }
+
+export type AccountLeaderboardRow = {
+  account_id: string
+  name: string
+  profile_url: string | null
+  archived: boolean
+  iterations: number
+  leads_sent: number
+  connections_accepted: number
+  replies: number
+  positive_replies: number
+  meetings_booked: number
+}
 
 export type SequenceStepLite = {
   type: 'connection_note' | 'message' | 'email'
@@ -203,17 +255,51 @@ export async function getClientStats(
   projectIds?: string[] | null,
 ): Promise<ClientStats> {
   const supabase = await createClient()
-  let query = supabase
-    .from('projects')
-    .select(`
-      id, name, icp_json,
-      iterations(
-        id, channel, status, started_at, stats, target_segment,
-        sequences(id, name, share_token, channel, status, steps)
-      )
-    `)
-    .eq('client_id', clientId)
-  const { data: projects } = await query
+  const [projectsRes, accountsRes, accountStatsRes] = await Promise.all([
+    supabase
+      .from('projects')
+      .select(`
+        id, name, icp_json,
+        iterations(
+          id, channel, status, started_at, stats, target_segment,
+          iteration_accounts(linkedin_account_id),
+          sequences(id, name, share_token, channel, status, steps)
+        )
+      `)
+      .eq('client_id', clientId),
+    supabase
+      .from('linkedin_accounts')
+      .select('id, name, profile_url, archived_at')
+      .eq('client_id', clientId),
+    // Per-account stat rows scoped to this client. Filter via the
+    // linkedin_account_id FK chain — every row references an account that
+    // already carries the client_id.
+    supabase
+      .from('iteration_account_stats')
+      .select('iteration_id, linkedin_account_id, leads_sent, connections_accepted, replies, positive_replies, meetings_booked, linkedin_accounts!inner(client_id)')
+      .eq('linkedin_accounts.client_id', clientId),
+  ])
+  const projects = projectsRes.data
+  const accounts = (accountsRes.data ?? []) as Array<{ id: string; name: string; profile_url: string | null; archived_at: string | null }>
+  const accountStatRows = (accountStatsRes.data ?? []) as Array<{
+    iteration_id: string
+    linkedin_account_id: string
+    leads_sent: number | null
+    connections_accepted: number | null
+    replies: number | null
+    positive_replies: number | null
+    meetings_booked: number | null
+  }>
+
+  const accountById = new Map(accounts.map(a => [a.id, a]))
+  // Group per-account rows by iteration so we can detect "has explicit
+  // breakdown" cheaply during the iteration loop.
+  const accountStatsByIteration = new Map<string, typeof accountStatRows>()
+  for (const r of accountStatRows) {
+    const arr = accountStatsByIteration.get(r.iteration_id) ?? []
+    arr.push(r)
+    accountStatsByIteration.set(r.iteration_id, arr)
+  }
 
   // Date range filter on iteration.started_at — inclusive bounds
   const fromMs = from ? new Date(from).getTime() : null
@@ -239,6 +325,29 @@ export async function getClientStats(
     top_sequences: [],
     top_industries: { linkedin: [], email: [] },
     top_roles: { linkedin: [], email: [] },
+    top_linkedin_accounts: [],
+    linkedin_unattributed_iterations: 0,
+  }
+
+  // Accumulator for LinkedIn account leaderboard. We pre-seed all known
+  // accounts so an account that ran zero iterations in this date window
+  // still appears with iterations=0 — caller filters those out.
+  type AccountAccum = {
+    iterations: number
+    leads_sent: number
+    connections_accepted: number
+    replies: number
+    positive_replies: number
+    meetings_booked: number
+  }
+  const accountAccum = new Map<string, AccountAccum>()
+  const ensureAccountAccum = (id: string): AccountAccum => {
+    let acc = accountAccum.get(id)
+    if (!acc) {
+      acc = { iterations: 0, leads_sent: 0, connections_accepted: 0, replies: 0, positive_replies: 0, meetings_booked: 0 }
+      accountAccum.set(id, acc)
+    }
+    return acc
   }
 
   type GroupAccum = { iterations: number; leads_sent: number; replies: number; meetings_booked: number }
@@ -287,6 +396,7 @@ export async function getClientStats(
         started_at: string | null
         stats: IterationMetrics | null
         target_segment: TargetSegment | null
+        iteration_accounts: Array<{ linkedin_account_id: string }>
         sequences: Array<{ id: string; name: string; share_token: string; channel: IterationChannel; status: string; steps: Array<{ subject?: string; content: string }> }>
       }>
     }
@@ -316,6 +426,22 @@ export async function getClientStats(
       // When a range is active, only include iterations launched within it
       if ((fromMs || toMs) && !inRange(it.started_at)) continue
 
+      // Effective stats for this iteration. When a per-account breakdown is
+      // present, sum its rows — the flat iteration.stats is the user's
+      // legacy/aggregate input and is intentionally ignored in that case
+      // (the breakdown is canonical). Otherwise use the flat blob as-is.
+      const breakdownRows = accountStatsByIteration.get(it.id)
+      const effectiveStats: IterationMetrics | null =
+        breakdownRows && breakdownRows.length > 0
+          ? breakdownRows.reduce<IterationMetrics>((acc, r) => ({
+              leads_sent: (acc.leads_sent ?? 0) + (r.leads_sent ?? 0),
+              connections_accepted: (acc.connections_accepted ?? 0) + (r.connections_accepted ?? 0),
+              replies: (acc.replies ?? 0) + (r.replies ?? 0),
+              positive_replies: (acc.positive_replies ?? 0) + (r.positive_replies ?? 0),
+              meetings_booked: (acc.meetings_booked ?? 0) + (r.meetings_booked ?? 0),
+            }), { leads_sent: 0, connections_accepted: 0, replies: 0, positive_replies: 0, meetings_booked: 0 })
+          : it.stats
+
       // Industry aggregation: prefer the iteration's target_segment.industry (the actual
       // narrow slice this iteration targeted). Fall back to project ICP industries only
       // when target_segment is absent — but split the stats evenly across them so we
@@ -323,11 +449,11 @@ export async function getClientStats(
       const ch: 'linkedin' | 'email' = it.channel === 'email' ? 'email' : 'linkedin'
       const iterIndustry = it.target_segment?.industry?.trim()
       if (iterIndustry) {
-        accumGroup(industryMap[ch], iterIndustry, it.stats)
-        accumGroup(projIndustryMap[ch], iterIndustry, it.stats)
+        accumGroup(industryMap[ch], iterIndustry, effectiveStats)
+        accumGroup(projIndustryMap[ch], iterIndustry, effectiveStats)
       } else if (projIndustries.length === 1) {
-        accumGroup(industryMap[ch], projIndustries[0], it.stats)
-        accumGroup(projIndustryMap[ch], projIndustries[0], it.stats)
+        accumGroup(industryMap[ch], projIndustries[0], effectiveStats)
+        accumGroup(projIndustryMap[ch], projIndustries[0], effectiveStats)
       }
       // If the iteration has no target_segment.industry and the project lists multiple
       // industries, we don't know which one it actually targeted — skip rather than
@@ -335,15 +461,15 @@ export async function getClientStats(
 
       // Roles: target_segment doesn't track role/title, only seniority. Without per-iteration
       // role info we can't attribute accurately, so we skip role aggregation when ambiguous.
-      if (projRoles.length === 1) accumGroup(roleMap[ch], projRoles[0], it.stats)
+      if (projRoles.length === 1) accumGroup(roleMap[ch], projRoles[0], effectiveStats)
 
       // Aggregate channel + project totals
       const channelBucket: 'linkedin' | 'email' = it.channel === 'email' ? 'email' : 'linkedin'
       result[channelBucket].iterations += 1
       projTotals[channelBucket].iterations += 1
-      if (it.stats) {
-        addToTotals(result[channelBucket], it.stats)
-        addToTotals(projTotals[channelBucket], it.stats)
+      if (effectiveStats) {
+        addToTotals(result[channelBucket], effectiveStats)
+        addToTotals(projTotals[channelBucket], effectiveStats)
       }
 
       // Status counts (global + per-project)
@@ -362,8 +488,51 @@ export async function getClientStats(
         }
       }
 
+      // LinkedIn account leaderboard — strict attribution only. We count
+      // running and finished iterations (running ones are "live" stats worth
+      // tracking). Drafts and discarded are skipped — drafts haven't started,
+      // discarded shouldn't pollute the ranking.
+      //   * Explicit per-account breakdown → use it verbatim.
+      //   * Single assigned account → credit the whole iteration.stats to them.
+      //   * Multiple assigned accounts and no breakdown → we have NO honest way
+      //     to split. Skip and bump the unattributed counter so the UI can
+      //     prompt for a breakdown.
+      //   * No assigned accounts → silently skipped.
+      if (it.channel === 'linkedin' && (it.status === 'finished' || it.status === 'running')) {
+        const breakdown = accountStatsByIteration.get(it.id)
+        if (breakdown && breakdown.length > 0) {
+          for (const row of breakdown) {
+            if (!accountById.has(row.linkedin_account_id)) continue
+            const acc = ensureAccountAccum(row.linkedin_account_id)
+            acc.iterations += 1
+            acc.leads_sent += row.leads_sent ?? 0
+            acc.connections_accepted += row.connections_accepted ?? 0
+            acc.replies += row.replies ?? 0
+            acc.positive_replies += row.positive_replies ?? 0
+            acc.meetings_booked += row.meetings_booked ?? 0
+          }
+        } else {
+          const assigned = (it.iteration_accounts ?? [])
+            .map(a => a.linkedin_account_id)
+            .filter(id => accountById.has(id))
+          if (assigned.length === 1) {
+            const acc = ensureAccountAccum(assigned[0])
+            acc.iterations += 1
+            if (it.stats) {
+              acc.leads_sent += it.stats.leads_sent ?? 0
+              acc.connections_accepted += it.stats.connections_accepted ?? 0
+              acc.replies += it.stats.replies ?? 0
+              acc.positive_replies += it.stats.positive_replies ?? 0
+              acc.meetings_booked += it.stats.meetings_booked ?? 0
+            }
+          } else if (assigned.length > 1) {
+            result.linkedin_unattributed_iterations += 1
+          }
+        }
+      }
+
       // Best sequence tracking — credit the approved sequence(s) with the iteration's metrics
-      if (it.stats) {
+      if (effectiveStats) {
         const approved = (it.sequences ?? []).filter(s => s.status === 'approved' && s.channel === it.channel)
         for (const seq of approved) {
           const key = seq.id
@@ -382,9 +551,9 @@ export async function getClientStats(
             seqMap.set(key, acc)
           }
           acc.iterations += 1
-          acc.leads_sent += it.stats.leads_sent ?? 0
-          acc.replies += it.stats.replies ?? 0
-          acc.meetings_booked += it.stats.meetings_booked ?? 0
+          acc.leads_sent += effectiveStats.leads_sent ?? 0
+          acc.replies += effectiveStats.replies ?? 0
+          acc.meetings_booked += effectiveStats.meetings_booked ?? 0
         }
       }
     }
@@ -485,6 +654,26 @@ export async function getClientStats(
   // Top industries / roles — global (already sorted by sortGroup defined above)
   result.top_industries = { linkedin: sortGroup(industryMap.linkedin), email: sortGroup(industryMap.email) }
   result.top_roles = { linkedin: sortGroup(roleMap.linkedin), email: sortGroup(roleMap.email) }
+
+  // LinkedIn account leaderboard — only accounts that actually ran ≥1
+  // iteration in scope. Sort by meetings → replies → leads_sent.
+  result.top_linkedin_accounts = Array.from(accountAccum.entries())
+    .filter(([, v]) => v.iterations > 0)
+    .map(([id, v]) => {
+      const a = accountById.get(id)!
+      return {
+        account_id: id,
+        name: a.name,
+        profile_url: a.profile_url,
+        archived: !!a.archived_at,
+        ...v,
+      }
+    })
+    .sort((a, b) =>
+      (b.meetings_booked - a.meetings_booked)
+      || (b.replies - a.replies)
+      || (b.leads_sent - a.leads_sent),
+    )
 
   return result
 }

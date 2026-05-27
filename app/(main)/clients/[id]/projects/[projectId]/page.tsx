@@ -4,6 +4,7 @@ import { getProject, getPipelineRuns, getContacts, getContactsCount, getIteratio
 import { getProjectCompanies, getProjectCompaniesCount } from '@/app/actions/companies'
 import { getSequences, getProjectCaseStudies, getProjectShareToken } from '@/app/actions/sequences'
 import { getIterations } from '@/app/actions/iterations'
+import { getLinkedinAccounts, getIterationAccountStats } from '@/app/actions/linkedin-accounts'
 import { ProjectPipelineView } from '@/components/project-pipeline-view'
 import { ClientLogo } from '@/components/client-logo'
 import { IcpEditor } from '@/components/icp-editor'
@@ -35,7 +36,8 @@ export default async function ProjectPage({
   const loadContacts = tab === 'contacts' || tab === 'sequences'
   const loadSequences = tab === 'sequences'
 
-  const [project, runs, companiesCount, contactsCount, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies] = await Promise.all([
+  const loadStats = tab === 'stats'
+  const [project, runs, companiesCount, contactsCount, contacts, sequences, caseStudies, shareToken, customColumns, projectCompanies, linkedinAccounts, iterationAccountStats] = await Promise.all([
     getProject(projectId),
     getPipelineRuns(projectId),
     getProjectCompaniesCount(projectId),
@@ -46,6 +48,8 @@ export default async function ProjectPage({
     getProjectShareToken(projectId),
     activeIteration ? getIterationCustomColumns(projectId, activeIteration.id) : Promise.resolve([] as string[]),
     activeIteration && loadCompanies ? getProjectCompanies(projectId, activeIteration.id) : Promise.resolve([]),
+    getLinkedinAccounts(clientId),
+    activeIteration && loadStats ? getIterationAccountStats(activeIteration.id) : Promise.resolve([]),
   ])
 
   if (!project) redirect(`/clients/${clientId}`)
@@ -89,7 +93,7 @@ export default async function ProjectPage({
       ) : (
         <>
           {/* Iterations + tabs — fixed in document position, no sticky */}
-          <IterationSelector iterations={iterations} activeId={activeIteration.id} projectId={projectId} icp={project.icp_json as Record<string, unknown> | null} />
+          <IterationSelector iterations={iterations} activeId={activeIteration.id} projectId={projectId} icp={project.icp_json as Record<string, unknown> | null} linkedinAccounts={linkedinAccounts} />
           <div className="border-b border-zinc-100 mb-6 flex gap-1">
             {([
               { key: 'pipeline', label: 'Pipeline' },
@@ -121,7 +125,15 @@ export default async function ProjectPage({
             ) : tab === 'sequences' ? (
               <SequenceBuilder projectId={projectId} initialSequences={sequences} caseStudies={caseStudies} iterationId={activeIteration.id} iterationChannel={activeIteration.channel} iterationSegment={activeIteration.target_segment} customColumns={customColumns} />
             ) : tab === 'stats' ? (
-              <IterationStats iterationId={activeIteration.id} initialStats={activeIteration.stats ?? null} uploadedAt={activeIteration.stats_uploaded_at ?? null} />
+              <IterationStats
+                iterationId={activeIteration.id}
+                channel={activeIteration.channel}
+                initialStats={activeIteration.stats ?? null}
+                uploadedAt={activeIteration.stats_uploaded_at ?? null}
+                linkedinAccounts={linkedinAccounts}
+                assignedAccountIds={activeIteration.linkedin_account_ids}
+                initialAccountStats={iterationAccountStats}
+              />
             ) : (
               <ProjectPipelineView projectId={projectId} iterationId={activeIteration.id} initialRuns={runs} icp={project.icp_json as Record<string, unknown> | null} />
             )}

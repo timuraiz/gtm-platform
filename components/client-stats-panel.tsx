@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef, useMemo, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mail, BarChart3, X, ExternalLink, ChevronDown } from 'lucide-react'
-import type { ClientStats, ChannelTotals, IterationChannel } from '@/app/actions/iterations'
+import { Mail, BarChart3, X, ExternalLink, ChevronDown, UserCircle2 } from 'lucide-react'
+import type { ClientStats, ChannelTotals, IterationChannel, AccountLeaderboardRow } from '@/app/actions/iterations'
 import { ChannelIcon } from './channel-icon'
 
 type FunnelStep = { key: keyof ChannelTotals; label: string }
@@ -340,6 +340,83 @@ function Stat({ label, value, highlight = false }: { label: string; value: numbe
   )
 }
 
+function TopAccountsCard({ accounts, unattributed }: { accounts: AccountLeaderboardRow[]; unattributed: number }) {
+  if (accounts.length === 0 && unattributed === 0) return null
+  const maxReplies = Math.max(1, ...accounts.map(a => a.replies))
+  return (
+    <div className="rounded-2xl border border-zinc-100 bg-white overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-zinc-50">
+        <p className="text-sm font-semibold text-zinc-900">Top LinkedIn accounts</p>
+        <p className="text-xs text-zinc-400 mt-0.5">
+          Ranked by meetings booked · counts only iterations with a single operator or an explicit per-account breakdown
+        </p>
+      </div>
+      {unattributed > 0 && (
+        <div className="px-5 py-2.5 border-b border-amber-100 bg-amber-50/50 text-xs text-amber-800 flex items-start gap-2">
+          <span className="size-1.5 rounded-full bg-amber-500 mt-1.5 shrink-0" />
+          <span>
+            <span className="font-medium">{unattributed} iteration{unattributed === 1 ? '' : 's'}</span> ran from multiple accounts without a per-account breakdown — excluded from the leaderboard. Open the iteration&apos;s Stats tab and use <span className="font-medium">Split by account</span> to count them.
+          </span>
+        </div>
+      )}
+      {accounts.length === 0 && (
+        <div className="px-5 py-8 text-center text-xs text-zinc-400">
+          No attributable iterations yet.
+        </div>
+      )}
+      <div className="divide-y divide-zinc-50">
+        {accounts.map((a, i) => {
+          const replyRate = a.leads_sent > 0 ? Math.round((a.replies / a.leads_sent) * 100) : null
+          const acceptRate = a.leads_sent > 0 ? Math.round((a.connections_accepted / a.leads_sent) * 100) : null
+          const widthPct = (a.replies / maxReplies) * 100
+          return (
+            <div key={a.account_id} className="px-5 py-3">
+              <div className="flex items-baseline justify-between gap-3 mb-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="size-6 rounded-full bg-zinc-100 flex items-center justify-center text-[11px] font-semibold text-zinc-500 shrink-0">{i + 1}</span>
+                  <UserCircle2 size={14} className="text-zinc-400 shrink-0" />
+                  <span className={`text-sm truncate ${a.archived ? 'text-zinc-400 italic' : 'text-zinc-800'}`}>
+                    {a.name}
+                    {a.archived && <span className="text-[10px] uppercase tracking-wider text-zinc-400 ml-1.5">(archived)</span>}
+                  </span>
+                  {a.profile_url && (
+                    <a
+                      href={a.profile_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-zinc-300 hover:text-zinc-600 transition-colors shrink-0"
+                      title="Open LinkedIn profile"
+                    >
+                      <ExternalLink size={11} />
+                    </a>
+                  )}
+                </div>
+                <span className="flex items-baseline gap-3 text-xs shrink-0">
+                  <span className="text-zinc-400 tabular-nums">{a.iterations} iter</span>
+                  <span className="text-zinc-400 tabular-nums">{a.leads_sent} sent</span>
+                  {acceptRate !== null && (
+                    <span className="tabular-nums text-zinc-500" title="Accept rate">{acceptRate}% acc</span>
+                  )}
+                  <span className={`tabular-nums ${a.replies === 0 ? 'text-zinc-300' : 'text-zinc-700'}`}>{a.replies} replies</span>
+                  {replyRate !== null && (
+                    <span className={`tabular-nums font-semibold ${replyRate === 0 ? 'text-zinc-300' : 'text-zinc-700'}`}>{replyRate}%</span>
+                  )}
+                  {a.meetings_booked > 0 && (
+                    <span className="tabular-nums font-semibold text-emerald-700">{a.meetings_booked} mtg</span>
+                  )}
+                </span>
+              </div>
+              <div className="h-1 bg-zinc-100 rounded-full overflow-hidden">
+                <div className="h-full bg-zinc-800 rounded-full transition-all duration-500 ease-out" style={{ width: `${widthPct}%` }} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function TopGroupCard({
   title,
   subtitle,
@@ -585,6 +662,14 @@ function ChannelReport({ stats }: { stats: ClientStats }) {
 
       {/* Top sequences — channel-filtered, full width with expandable rows */}
       <TopSequencesCard sequences={sequences} />
+
+      {/* Top LinkedIn accounts — only for the LinkedIn sub-tab */}
+      {channel === 'linkedin' && (
+        <TopAccountsCard
+          accounts={stats.top_linkedin_accounts}
+          unattributed={stats.linkedin_unattributed_iterations}
+        />
+      )}
 
       {/* Industries for this channel */}
       {industries.length > 0 && (
