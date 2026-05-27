@@ -86,18 +86,34 @@ export function ContactsTable({
   // back to everything that passes the current filter + search. This lets
   // users grab a slice (eg. the top 50 by hand) instead of always
   // exporting the whole iteration.
+  //
+  // Custom CSV-upload columns (custom_data jsonb) are appended as extra
+  // columns in the order they first appear in the target set.
   function exportCsv() {
     const target = selected.size > 0
       ? filtered.filter(c => selected.has(c.id))
       : filtered
     if (target.length === 0) return
-    const header = 'First Name,Last Name,Title,Email,LinkedIn,Company,Domain'
-    const rows = target.map(c =>
-      [c.first_name, c.last_name, c.title, c.email, c.linkedin_url, c.company_name, c.company_domain]
-        .map(v => `"${(v ?? '').replace(/"/g, '""')}"`)
-        .join(',')
-    )
-    const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' })
+
+    // Discover custom columns across the rows we're about to export.
+    const customCols: string[] = []
+    const seen = new Set<string>()
+    for (const c of target) {
+      const cd = c.custom_data
+      if (!cd) continue
+      for (const k of Object.keys(cd)) {
+        if (!seen.has(k)) { seen.add(k); customCols.push(k) }
+      }
+    }
+
+    const escape = (v: string | null | undefined) => `"${(v ?? '').replace(/"/g, '""')}"`
+    const headerCols = ['First Name', 'Last Name', 'Title', 'Email', 'LinkedIn', 'Company', 'Domain', ...customCols]
+    const rows = target.map(c => [
+      c.first_name, c.last_name, c.title, c.email, c.linkedin_url, c.company_name, c.company_domain,
+      ...customCols.map(k => c.custom_data?.[k] ?? ''),
+    ].map(escape).join(','))
+
+    const blob = new Blob([[headerCols.map(escape).join(','), ...rows].join('\n')], { type: 'text/csv' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = selected.size > 0 ? `contacts-${target.length}.csv` : 'contacts.csv'
