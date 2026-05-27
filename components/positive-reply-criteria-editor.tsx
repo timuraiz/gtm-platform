@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Sparkles, Pencil, Check, X } from 'lucide-react'
+import { Pencil, Check, X } from 'lucide-react'
 import { updateProjectPositiveReplyCriteria } from '@/app/actions/projects'
 
 // Per-project description of what counts as a positive reply. Fed to
@@ -31,12 +31,7 @@ export function PositiveReplyCriteriaEditor({
   return (
     <div className="rounded-2xl border border-zinc-100 bg-white p-5">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="flex items-center gap-2">
-          <span className="size-5 rounded-md bg-amber-50 flex items-center justify-center">
-            <Sparkles size={11} className="text-amber-600" />
-          </span>
-          <p className="text-sm font-semibold text-zinc-900">Positive-reply criteria</p>
-        </div>
+        <p className="text-sm font-semibold text-zinc-900">Positive-reply criteria</p>
         {!editing ? (
           <button
             onClick={() => { setDraft(value ?? ''); setEditing(true) }}
