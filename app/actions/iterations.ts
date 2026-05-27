@@ -489,18 +489,20 @@ export async function getClientStats(
             }), { leads_sent: 0, connections_accepted: 0, replies: 0, positive_replies: 0, meetings_booked: 0 })
           : it.stats
 
-      // If we have replies recorded via the inbound webhook, those are the
-      // ground truth for replies / positive_replies. Override whatever the
-      // manual stats said. Other metrics (leads_sent, connections_accepted,
-      // meetings_booked) still come from manual entry — the webhook can't
-      // know those.
+      // Merge webhook-captured replies with manual entry. We take MAX rather
+      // than overwrite so manually-entered totals stay the floor — early on,
+      // the webhook captures only a fraction of what the user already
+      // counted by hand in LinkedIn. As webhook adoption grows past the
+      // manual count, it takes over naturally. Other metrics (leads_sent,
+      // connections_accepted, meetings_booked) come from manual entry only —
+      // the webhook can't know those.
       const fromReplies = replyCountsByIteration.get(it.id)
       if (fromReplies) {
         const base = effectiveStats ?? { leads_sent: null, connections_accepted: null, replies: null, positive_replies: null, meetings_booked: null }
         effectiveStats = {
           ...base,
-          replies: fromReplies.replies,
-          positive_replies: fromReplies.positive_replies,
+          replies: Math.max(base.replies ?? 0, fromReplies.replies),
+          positive_replies: Math.max(base.positive_replies ?? 0, fromReplies.positive_replies),
         }
       }
 
